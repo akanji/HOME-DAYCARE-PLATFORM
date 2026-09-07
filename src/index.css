@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+/* Custom colors and theme tokens: Golden Yellow, White, and Olive Green */
+:root {
+  --gold-primary: #D49A00;
+  --gold-vibrant: #E5A910;
+  --gold-light: #FEF08A;
+  --gold-dark: #B45309;
+  --olive-primary: #52632B;
+  --olive-dark: #2F3C16;
+  --olive-deep: #1E250E;
+  --olive-light: #7E9543;
+  --olive-tint: #F3F6EC;
+}
+
+.dark {
+  color-scheme: dark;
+}

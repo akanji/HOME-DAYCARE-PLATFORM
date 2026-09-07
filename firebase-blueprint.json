@@ -1,0 +1,135 @@
+{
+  "entities": {
+    "users": {
+      "path": "users/{userId}",
+      "description": "User profile with role, trial status, and subscription details",
+      "fields": {
+        "id": { "type": "string", "description": "User UID" },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["parent", "provider", "admin", "agency"] },
+        "createdAt": { "type": "string" },
+        "trial": { "type": "map" },
+        "subscription": { "type": "map" },
+        "billingHistory": { "type": "list" },
+        "hasFullAccess": { "type": "boolean" }
+      },
+      "relationships": []
+    },
+    "children": {
+      "path": "children/{childId}",
+      "description": "Registered children profiles enrolled in daycare",
+      "fields": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "firstName": { "type": "string", "maxLength": 80 },
+        "lastName": { "type": "string", "maxLength": 80 },
+        "preferredName": { "type": "string", "maxLength": 80 },
+        "dateOfBirth": { "type": "string" },
+        "ageYears": { "type": "number" },
+        "ageMonths": { "type": "number" },
+        "gender": { "type": "string" },
+        "parentName": { "type": "string", "maxLength": 100 },
+        "parentEmail": { "type": "string", "maxLength": 150 },
+        "parentPhone": { "type": "string", "maxLength": 30 },
+        "emergencyContacts": { "type": "list" },
+        "authorizedPickups": { "type": "list" },
+        "enrollmentStatus": { "type": "string", "enum": ["enrolled", "waitlist", "inactive"] },
+        "dietaryRestrictions": { "type": "list" },
+        "allergies": { "type": "list" },
+        "authorizedMedications": { "type": "list" },
+        "sleepPreferences": { "type": "string" },
+        "comfortPreferences": { "type": "string" },
+        "specialInstructions": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "timeline": { "type": "list" },
+        "isCheckedIn": { "type": "boolean" },
+        "checkInTime": { "type": "string" },
+        "checkOutTime": { "type": "string" }
+      },
+      "relationships": [
+        { "collection": "users", "field": "providerId" }
+      ]
+    },
+    "attendance": {
+      "path": "attendance/{attendanceId}",
+      "description": "Daily attendance check-in and check-out logs",
+      "fields": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "childId": { "type": "string" },
+        "childName": { "type": "string", "maxLength": 100 },
+        "date": { "type": "string" },
+        "checkInTime": { "type": "string" },
+        "checkOutTime": { "type": "string" },
+        "authorizedAdult": { "type": "string" },
+        "providerName": { "type": "string" },
+        "verificationMethod": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string", "enum": ["present", "checked_out", "absent", "expected"] }
+      },
+      "relationships": [
+        { "collection": "users", "field": "providerId" },
+        { "collection": "children", "field": "childId" }
+      ]
+    },
+    "safetyTasks": {
+      "path": "safetyTasks/{taskId}",
+      "description": "Safety checklists and remediation tasks",
+      "fields": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "area": { "type": "string" },
+        "observation": { "type": "string" },
+        "priority": { "type": "string", "enum": ["High", "Medium", "Low"] },
+        "assignedTo": { "type": "string" },
+        "status": { "type": "string", "enum": ["Open", "In Review", "Resolved"] },
+        "createdAt": { "type": "string" },
+        "resolvedAt": { "type": "string" }
+      },
+      "relationships": [
+        { "collection": "users", "field": "providerId" }
+      ]
+    },
+    "incidents": {
+      "path": "incidents/{incidentId}",
+      "description": "Incident and safety logs",
+      "fields": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "childName": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "bodyLocation": { "type": "string" },
+        "firstAidAdministered": { "type": "string" },
+        "parentNotified": { "type": "boolean" },
+        "parentNotificationTime": { "type": "string" },
+        "staffSignatures": { "type": "list" },
+        "licensingNotificationRequired": { "type": "boolean" },
+        "status": { "type": "string" }
+      },
+      "relationships": [
+        { "collection": "users", "field": "providerId" }
+      ]
+    },
+    "dailyReports": {
+      "path": "dailyReports/{reportId}",
+      "description": "Daily activity and care logs sent to parents",
+      "fields": {
+        "id": { "type": "string" },
+        "providerId": { "type": "string" },
+        "childId": { "type": "string" },
+        "childName": { "type": "string" },
+        "date": { "type": "string" },
+        "activities": { "type": "list" },
+        "notesForParents": { "type": "string" }
+      },
+      "relationships": [
+        { "collection": "users", "field": "providerId" },
+        { "collection": "children", "field": "childId" }
+      ]
+    }
+  }
+}
