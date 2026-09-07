@@ -49,6 +49,9 @@ interface LeftPanelProps {
   isOpenMobile: boolean;
   setIsOpenMobile: (open: boolean) => void;
   pendingSyncCount: number;
+  lastSyncedAt?: string;
+  onTriggerSync?: () => void;
+  isSyncingToFirebase?: boolean;
 }
 
 interface OfflineSyncItem {
@@ -84,6 +87,9 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   isOpenMobile,
   setIsOpenMobile,
   pendingSyncCount,
+  lastSyncedAt,
+  onTriggerSync,
+  isSyncingToFirebase,
 }) => {
   const roles: { id: UserRole; label: string; icon: string }[] = [
     { id: 'provider', label: 'Provider', icon: '🏡' },
@@ -94,6 +100,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, badge: null, roles: ['provider', 'admin', 'agency'] },
+    { id: 'staff_scheduling', label: 'Staff Scheduling', icon: Users, badge: 'CCEYA', roles: ['provider', 'admin', 'agency'] },
     { id: 'children', label: 'Children & Timeline', icon: Users, badge: '9', roles: ['provider', 'parent', 'admin', 'agency'] },
     { id: 'attendance', label: 'Attendance & Pickup', icon: Clock, badge: '8/10', roles: ['provider', 'admin', 'agency'] },
     { id: 'vision', label: 'Computer Vision AI', icon: Eye, badge: 'Active', roles: ['provider', 'admin', 'agency', 'parent'] },
@@ -297,13 +304,40 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
             </button>
           </div>
 
-          <div className="mt-3 flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/20 text-[#E5A910] text-[10px] font-mono font-bold border border-[#E5A910]/30">
-              <Lock className="w-2.5 h-2.5" /> AES-256
-            </span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#52632B] text-white text-[10px] font-mono font-bold border border-white/20">
-              COPPA 2026
-            </span>
+          <div className="mt-3 flex items-center justify-between gap-1.5 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/20 text-[#E5A910] text-[10px] font-mono font-bold border border-[#E5A910]/30">
+                <Lock className="w-2.5 h-2.5" /> AES-256
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#52632B] text-white text-[10px] font-mono font-bold border border-white/20">
+                COPPA 2026
+              </span>
+            </div>
+
+            {/* Top-Level Online / Last Synced Pill */}
+            <div
+              id="left-panel-top-online-indicator"
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-black/30 border border-white/10 text-[10px] font-mono"
+              title={`Network: ${isOnline ? 'Online' : 'Offline'} • Last pushed to Firebase: ${lastSyncedAt || 'Just now'}`}
+            >
+              <span className="relative flex h-2 w-2">
+                {isOnline ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </>
+                ) : (
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                )}
+              </span>
+              <span className={`font-bold ${isOnline ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {isOnline ? 'ONLINE' : 'OFFLINE'}
+              </span>
+              <span className="text-white/40">•</span>
+              <span className="text-white/70 text-[9px]">
+                {lastSyncedAt ? lastSyncedAt : 'Sync: Live'}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -623,27 +657,51 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
             </span>
           </div>
 
-          {/* Cloud Sync Status Button */}
-          <div className="flex items-center justify-between">
-            <span className="text-white text-xs font-bold uppercase tracking-wider font-mono">
-              CLOUD SYNC
-            </span>
-            <button
-              id="cloud-sync-toggle-button"
-              onClick={() => setIsOnline(!isOnline)}
-              className="flex items-center gap-1.5 focus:outline-none"
-              title="Toggle Online / Offline Sync Mode"
-            >
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded-sm font-bold font-mono uppercase ${
-                  isOnline
-                    ? 'bg-green-500 text-white'
-                    : 'bg-amber-500 text-white'
-                }`}
-              >
-                {isOnline ? 'ACTIVE' : 'OFFLINE'}
+          {/* Cloud Sync Status & Last Synced Timestamp */}
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex items-center justify-between">
+              <span className="text-white text-xs font-bold uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <Cloud className="w-3 h-3 text-emerald-400" />
+                <span>FIREBASE SYNC</span>
               </span>
-            </button>
+              <button
+                id="cloud-sync-toggle-button"
+                onClick={() => setIsOnline(!isOnline)}
+                className="flex items-center gap-1.5 focus:outline-none cursor-pointer"
+                title="Toggle Online / Offline Sync Mode"
+              >
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-sm font-bold font-mono uppercase ${
+                    isOnline
+                      ? 'bg-green-500 text-white'
+                      : 'bg-amber-500 text-white'
+                  }`}
+                >
+                  {isOnline ? 'ONLINE' : 'OFFLINE'}
+                </span>
+              </button>
+            </div>
+
+            {/* Exact moment local state was last pushed to Firebase */}
+            <div className="flex items-center justify-between text-[10px] font-mono text-white/70 px-1 py-0.5 rounded bg-black/20 border border-white/5">
+              <span>Last Synced:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-amber-300">
+                  {lastSyncedAt || 'Just now'}
+                </span>
+                {onTriggerSync && (
+                  <button
+                    id="left-panel-trigger-firebase-sync-btn"
+                    onClick={onTriggerSync}
+                    disabled={!isOnline || isSyncingToFirebase}
+                    title="Push local snapshot to Firebase Firestore now"
+                    className="p-0.5 text-white/70 hover:text-white disabled:opacity-30 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-2.5 h-2.5 ${isSyncingToFirebase ? 'animate-spin text-amber-300' : ''}`} />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Dark Mode Toggle Row matching High Density design */}

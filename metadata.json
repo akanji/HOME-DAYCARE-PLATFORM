@@ -1,7 +1,7 @@
 {
   "name": "Home Daycare Platform",
   "description": "Enterprise home daycare management and computer vision safety platform with visual hazard detection, child tracking, A2A judge agents, and enterprise compliance.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

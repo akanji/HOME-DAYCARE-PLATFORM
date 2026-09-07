@@ -776,8 +776,8 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
               <div className="pt-6 space-y-3">
                 {/* Official PayPal Subscription Smart Button with exact container ID */}
                 <PayPalSubscriptionSmartButton
-                  planId="P-8RP56728U1771900GNKORJ6A"
-                  containerId="paypal-button-container-P-8RP56728U1771900GNKORJ6A"
+                  planId={gatewayConfig?.planIdMonthly || "P-8RP56728U1771900GNKORJ6A"}
+                  containerId="paypal-button-container-monthly"
                   planType="monthly"
                   planLabel="Subscribe with PayPal ($19.99/mo)"
                   onApproveSuccess={handlePayPalSubscriptionApproved}
@@ -850,8 +850,8 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
               <div className="pt-6 space-y-3">
                 {/* Official PayPal Subscription Smart Button with exact container ID */}
                 <PayPalSubscriptionSmartButton
-                  planId="P-14S17187NL669422XNKORLRQ"
-                  containerId="paypal-button-container-P-14S17187NL669422XNKORLRQ"
+                  planId={gatewayConfig?.planIdYearly || "P-14S17187NL669422XNKORLRQ"}
+                  containerId="paypal-button-container-yearly"
                   planType="yearly"
                   planLabel="Subscribe with PayPal ($199.99/yr)"
                   onApproveSuccess={handlePayPalSubscriptionApproved}
@@ -864,61 +864,6 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                 </div>
               </div>
             </div>
-          </div>
-
-          {/* PayPal Payment Gateway Configuration & Diagnostics */}
-          <div
-            id="paypal-gateway-status-panel"
-            className="bg-[#FAF9F6] dark:bg-[#12140f] rounded-2xl p-6 border border-gray-200 dark:border-neutral-800 max-w-4xl mx-auto text-xs font-mono space-y-4 shadow-sm"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-200 dark:border-neutral-800 pb-3">
-              <div className="flex items-center gap-2 text-[#52632B] dark:text-[#E5A910] font-bold text-sm">
-                <Server className="w-4 h-4" />
-                <span>PayPal Gateway Payment Configuration & Deployment</span>
-              </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] w-fit">
-                <Activity className="w-3 h-3 animate-pulse" />
-                <span>Gateway Connected & Operational</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[11px]">
-              <div className="p-3 bg-white dark:bg-[#181a15] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
-                <span className="text-gray-400 uppercase text-[9px] block">PAYPAL_API_URL:</span>
-                <p className="font-bold text-gray-900 dark:text-neutral-100 truncate" title={gatewayConfig?.apiUrl || 'https://api-m.sandbox.paypal.com'}>
-                  {gatewayConfig?.apiUrl || 'https://api-m.sandbox.paypal.com'}
-                </p>
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Sandbox API Gateway</span>
-              </div>
-
-              <div className="p-3 bg-white dark:bg-[#181a15] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
-                <span className="text-gray-400 uppercase text-[9px] block">PAYPAL_PRODUCT_ID:</span>
-                <p className="font-bold text-gray-900 dark:text-neutral-100 truncate" title={gatewayConfig?.productId || 'PROD-DAYCARE-ENTERPRISE'}>
-                  {gatewayConfig?.productId || 'PROD-DAYCARE-ENTERPRISE'}
-                </p>
-                <span className="text-[10px] text-gray-500">Enterprise Product</span>
-              </div>
-
-              <div className="p-3 bg-white dark:bg-[#181a15] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
-                <span className="text-gray-400 uppercase text-[9px] block">PAYPAL_PLAN_ID_MONTHLY:</span>
-                <p className="font-bold text-gray-900 dark:text-neutral-100 truncate" title={gatewayConfig?.planIdMonthly || 'P-MONTHLY-1999'}>
-                  {gatewayConfig?.planIdMonthly || 'P-MONTHLY-1999'}
-                </p>
-                <span className="text-[10px] text-[#52632B] dark:text-[#E5A910] font-semibold">$19.99 / Month</span>
-              </div>
-
-              <div className="p-3 bg-white dark:bg-[#181a15] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
-                <span className="text-gray-400 uppercase text-[9px] block">PAYPAL_PLAN_ID_YEARLY:</span>
-                <p className="font-bold text-gray-900 dark:text-neutral-100 truncate" title={gatewayConfig?.planIdYearly || 'P-YEARLY-19999'}>
-                  {gatewayConfig?.planIdYearly || 'P-YEARLY-19999'}
-                </p>
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">$199.99 / Year</span>
-              </div>
-            </div>
-
-            <p className="text-gray-600 dark:text-gray-400 font-sans text-xs leading-relaxed">
-              When a subscriber's 7-Day free trial expires, the PayPal payment gateway enables seamless continuation of platform access. All PayPal REST API calls, OAuth bearer token requests, order creation (<code className="text-[11px] font-mono bg-gray-100 dark:bg-neutral-800 px-1 py-0.5 rounded">/v2/checkout/orders</code>), and payment capture are securely orchestrated server-side.
-            </p>
           </div>
         </div>
       )}
@@ -1673,7 +1618,7 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                 </span>
               </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/30 text-white uppercase">
-                Encrypted Sandbox
+                256-Bit SSL Encrypted
               </span>
             </div>
 
@@ -1685,7 +1630,7 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                       Confirm Subscription
                     </h3>
                     <p className="text-gray-500 text-[11px]">
-                      Select your preferred payment method and authorize subscription via PayPal Gateway.
+                      Select your preferred payment method and authorize your subscription securely via PayPal.
                     </p>
                   </div>
 
@@ -1797,17 +1742,9 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">PayPal Gateway API:</span>
-                      <span className="font-mono text-[10px] text-gray-700 dark:text-gray-300 truncate max-w-[180px]">
-                        {gatewayConfig?.apiUrl || 'https://api-m.sandbox.paypal.com'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Configured Plan ID:</span>
-                      <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
-                        {selectedPlanForCheckout === 'yearly'
-                          ? gatewayConfig?.planIdYearly || 'P-YEARLY-19999'
-                          : gatewayConfig?.planIdMonthly || 'P-MONTHLY-1999'}
+                      <span className="text-gray-500">Billing Cycle:</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">
+                        {selectedPlanForCheckout === 'yearly' ? 'Annual (Billed Yearly)' : 'Monthly (Billed Monthly)'}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1827,14 +1764,14 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                   </div>
 
                   <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg border border-emerald-200 dark:border-emerald-900/60 text-[11px] text-emerald-800 dark:text-emerald-300">
-                    <span className="font-bold block mb-0.5">🔒 Verified PayPal Gateway Handshake</span>
-                    Credentials remain protected in Google AI Studio server environment. Subscribing automatically clears trial expiration limits and restores unhindered platform access.
+                    <span className="font-bold block mb-0.5">🔒 Secure PayPal 256-Bit Encrypted Checkout</span>
+                    Subscribing automatically clears trial expiration limits and restores immediate full platform access. Cancel anytime with zero penalty.
                   </div>
 
                   {/* Modal PayPal Smart Button Container */}
                   <div className="pt-2">
                     <PayPalSubscriptionSmartButton
-                      planId={selectedPlanForCheckout === 'yearly' ? 'P-14S17187NL669422XNKORLRQ' : 'P-8RP56728U1771900GNKORJ6A'}
+                      planId={selectedPlanForCheckout === 'yearly' ? (gatewayConfig?.planIdYearly || 'P-14S17187NL669422XNKORLRQ') : (gatewayConfig?.planIdMonthly || 'P-8RP56728U1771900GNKORJ6A')}
                       containerId={`paypal-modal-button-container-${selectedPlanForCheckout === 'yearly' ? 'yearly' : 'monthly'}`}
                       planType={selectedPlanForCheckout}
                       planLabel={`Subscribe with PayPal (${selectedPlanForCheckout === 'yearly' ? '$199.99/yr' : '$19.99/mo'})`}
@@ -1857,7 +1794,7 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                       className="flex-1 py-3 rounded-xl bg-[#0070BA] hover:bg-[#003087] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-transform active:scale-[0.99] cursor-pointer"
                     >
                       <CreditCard className="w-4 h-4 text-[#FFC439]" />
-                      <span>Instant Sandbox Authorize</span>
+                      <span>Authorize with PayPal</span>
                     </button>
                   </div>
                 </>
@@ -1958,7 +1895,7 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                 <span className="font-bold">{currentUser?.fullName || 'Clara Oswald'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Payment Gateway:</span>
+                <span className="text-gray-500">Payment Method:</span>
                 <span>{viewingInvoice.paymentMethod}</span>
               </div>
               <div className="flex justify-between">

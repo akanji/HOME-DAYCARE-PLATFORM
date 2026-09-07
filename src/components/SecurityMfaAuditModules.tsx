@@ -31,10 +31,12 @@ import {
   Send,
   Database,
   Activity,
+  Globe,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { AuditLogEntry, UserRole } from '../types';
 import { encryptAES256GCM, decryptAES256GCM, sha256Hex } from '../utils/crypto';
+import { OntarioBilingualSettings } from './OntarioBilingualSettings';
 
 interface SecurityAuditProps {
   auditLogs: AuditLogEntry[];
@@ -54,7 +56,7 @@ export const SecurityMfaModule: React.FC<SecurityAuditProps> = ({
 }) => {
   // Navigation sub-tabs within Security Center
   const [securityTab, setSecurityTab] = useState<
-    'mfa_biometrics' | 'token_lifecycle' | 'aes_vault' | 'rbac' | 'cloud_sync' | 'monitoring'
+    'mfa_biometrics' | 'token_lifecycle' | 'aes_vault' | 'rbac' | 'cloud_sync' | 'monitoring' | 'bilingual_settings'
   >('mfa_biometrics');
 
   // ==========================================
@@ -385,6 +387,7 @@ export const SecurityMfaModule: React.FC<SecurityAuditProps> = ({
           { id: 'rbac', label: '4. Role-Based Access Control (RBAC)', icon: UserCheck },
           { id: 'cloud_sync', label: '5. Real-Time Cloud Sync & Offline', icon: Cloud },
           { id: 'monitoring', label: '6. Automated Monitoring & Audits', icon: Shield },
+          { id: 'bilingual_settings', label: '7. Ontario Bilingual Licensing', icon: Globe },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = securityTab === tab.id;
@@ -1296,6 +1299,13 @@ export const SecurityMfaModule: React.FC<SecurityAuditProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* =========================================================
+          SUB-VIEW 7: ONTARIO BILINGUAL LICENSING SETTINGS
+          ========================================================= */}
+      {securityTab === 'bilingual_settings' && (
+        <OntarioBilingualSettings />
       )}
 
       {/* =========================================================

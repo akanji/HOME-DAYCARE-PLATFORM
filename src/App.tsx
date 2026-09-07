@@ -34,6 +34,8 @@ import {
   ShieldAlert,
   Volume2,
   Users2,
+  RefreshCw,
+  Globe,
 } from 'lucide-react';
 
 export interface DispatchedContactEndpoint {
@@ -49,6 +51,7 @@ export interface DispatchedContactEndpoint {
 }
 import { LeftPanel } from './components/LeftPanel';
 import { ProviderDashboard } from './components/ProviderDashboard';
+import { StaffSchedulingModule } from './components/StaffSchedulingModule';
 import { ChildrenModule } from './components/ChildrenModule';
 import { AttendanceModule } from './components/AttendanceModule';
 import { ComputerVisionModule, PRESET_SCENES } from './components/ComputerVisionModule';
@@ -72,6 +75,7 @@ import {
 import { CopilotAndMessagingModule } from './components/CopilotAndMessagingModule';
 import { AddChildModal } from './components/AddChildModal';
 import { SubscriptionBillingModule } from './components/SubscriptionBillingModule';
+import { useLanguage } from './context/LanguageContext';
 
 import {
   Child,
@@ -86,9 +90,11 @@ import {
   UserRole,
   AuthUser,
   SubscriptionPlanId,
+  StaffMember,
+  DaycareRoom,
 } from './types';
 import { safeFetchJson } from './utils/apiClient';
-import { testFirestoreConnection } from './firebase';
+import { testFirestoreConnection, pushLocalStateToFirebase } from './firebase';
 
 import {
   INITIAL_CHILDREN,
@@ -101,6 +107,11 @@ import {
   INITIAL_PROVIDERS,
   INITIAL_AUDIT_LOGS,
 } from './mockData';
+import {
+  INITIAL_STAFF_MEMBERS,
+  INITIAL_DAYCARE_ROOMS,
+  HISTORICAL_INCIDENTS_HEATMAP,
+} from './data/staffAndRoomsData';
 
 const DEFAULT_CLIENT_USER: AuthUser = {
   id: 'usr_clara_01',
@@ -135,6 +146,8 @@ const DEFAULT_CLIENT_USER: AuthUser = {
 };
 
 export default function App() {
+  const { language, setLanguage, t } = useLanguage();
+
   // Navigation & Role State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [userRole, setUserRole] = useState<UserRole>('provider');
@@ -142,6 +155,10 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [isOpenMobile, setIsOpenMobile] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>(() => {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+  const [isSyncingToFirebase, setIsSyncingToFirebase] = useState<boolean>(false);
 
   // Core Data Collections
   const [childrenList, setChildrenList] = useState<Child[]>(INITIAL_CHILDREN);
@@ -149,7 +166,11 @@ export default function App() {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(INITIAL_ATTENDANCE);
   const [dailyReports, setDailyReports] = useState<DailyReport[]>(INITIAL_DAILY_REPORTS);
   const [safetyTasks, setSafetyTasks] = useState<SafetyTask[]>(INITIAL_SAFETY_TASKS);
-  const [incidents, setIncidents] = useState<IncidentReport[]>(INITIAL_INCIDENTS);
+  const [incidents, setIncidents] = useState<IncidentReport[]>(() => {
+    return [...INITIAL_INCIDENTS, ...HISTORICAL_INCIDENTS_HEATMAP];
+  });
+  const [staffList, setStaffList] = useState<StaffMember[]>(INITIAL_STAFF_MEMBERS);
+  const [daycareRooms, setDaycareRooms] = useState<DaycareRoom[]>(INITIAL_DAYCARE_ROOMS);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(INITIAL_CALENDAR_EVENTS);
   const [photos, setPhotos] = useState<PhotoItem[]>(INITIAL_PHOTOS);
   const [providers, setProviders] = useState<DaycareProvider[]>(INITIAL_PROVIDERS);
@@ -560,6 +581,42 @@ export default function App() {
   };
 
   // ==========================================
+  // FIREBASE STATE SYNCHRONIZATION & TELEMETRY
+  // Pushes local state snapshot and records exact sync moment
+  // ==========================================
+  const handleSyncToFirebase = useCallback(async (actionLabel?: string) => {
+    if (!isOnline) return;
+    setIsSyncingToFirebase(true);
+    try {
+      const checkedIn = childrenList.filter((c) => c.isCheckedIn).length;
+      const res = await pushLocalStateToFirebase({
+        childrenCount: childrenList.length,
+        checkedInCount: checkedIn,
+        safetyTasksCount: safetyTasks.length,
+        lastAction: actionLabel || 'Scheduled local state push',
+        syncedBy: currentUser?.fullName || 'Clara Oswald',
+      });
+
+      if (res && res.formattedTime) {
+        setLastSyncedAt(res.formattedTime);
+      }
+    } catch (e) {
+      console.warn('Firebase state sync notice:', e);
+    } finally {
+      setIsSyncingToFirebase(false);
+    }
+  }, [isOnline, childrenList, safetyTasks, currentUser?.fullName]);
+
+  // Periodic heartbeat sync to Firebase every 45s while online
+  useEffect(() => {
+    handleSyncToFirebase('Initial session boot sync');
+    const interval = setInterval(() => {
+      handleSyncToFirebase('Scheduled heartbeat state sync');
+    }, 45000);
+    return () => clearInterval(interval);
+  }, [handleSyncToFirebase]);
+
+  // ==========================================
   // AUTO-LOGOUT & SECURE SESSION TIMEOUT STATE
   // Tracks user inactivity & locks UI after 15 min
   // ==========================================
@@ -917,6 +974,9 @@ export default function App() {
       case 'report_incident':
         setActiveTab('incidents');
         break;
+      case 'staff_schedule':
+        setActiveTab('staff_scheduling');
+        break;
       case 'message_parent':
         setActiveTab('messages');
         break;
@@ -1039,15 +1099,21 @@ export default function App() {
         isOnline={isOnline}
         setIsOnline={(val) => {
           setIsOnline(val);
-          if (val && pendingSyncCount > 0) {
-            showToast(`Synchronized ${pendingSyncCount} offline records to Cloud!`);
-            setPendingSyncCount(0);
+          if (val) {
+            handleSyncToFirebase('Reconnected online');
+            if (pendingSyncCount > 0) {
+              showToast(`Synchronized ${pendingSyncCount} offline records to Firebase!`);
+              setPendingSyncCount(0);
+            }
           }
         }}
         onOpenQuickAction={handleOpenQuickAction}
         isOpenMobile={isOpenMobile}
         setIsOpenMobile={setIsOpenMobile}
         pendingSyncCount={pendingSyncCount}
+        lastSyncedAt={lastSyncedAt}
+        onTriggerSync={() => handleSyncToFirebase('Manual trigger from sidebar')}
+        isSyncingToFirebase={isSyncingToFirebase}
       />
 
       {/* Main Content Area Offset for the Left Single Panel */}
@@ -1136,6 +1202,53 @@ export default function App() {
                 <span>Test 15m Timeout (10s)</span>
               </button>
 
+              {/* TOP-LEVEL ONLINE STATUS & LAST SYNCED TIMESTAMP INDICATOR */}
+              <div
+                id="top-level-online-status-indicator"
+                className="flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-md bg-gray-50 dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 text-xs font-mono shadow-xs"
+                title={`Network Status: ${isOnline ? 'Online' : 'Offline'} • Local state last successfully pushed to Firebase: ${lastSyncedAt || 'Just now'}`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    {isOnline ? (
+                      <>
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </>
+                    ) : (
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    )}
+                  </span>
+                  <span
+                    className={`font-bold uppercase text-[11px] ${
+                      isOnline
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-amber-700 dark:text-amber-400'
+                    }`}
+                  >
+                    {isOnline ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+
+                <span className="text-gray-300 dark:text-neutral-700 hidden sm:inline">|</span>
+
+                <div className="flex items-center gap-1 text-[11px] text-gray-500 dark:text-neutral-400">
+                  <span className="hidden md:inline">Last Synced:</span>
+                  <span className="font-semibold text-gray-800 dark:text-neutral-200">
+                    {lastSyncedAt || 'Just now'}
+                  </span>
+                  <button
+                    id="header-manual-sync-now-button"
+                    onClick={() => handleSyncToFirebase('Manual top-bar sync button')}
+                    disabled={isSyncingToFirebase || !isOnline}
+                    title="Push local state snapshot to Firebase Firestore now"
+                    className="p-0.5 rounded text-gray-400 hover:text-[#52632B] dark:hover:text-[#E5A910] hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors disabled:opacity-40 cursor-pointer ml-0.5"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isSyncingToFirebase ? 'animate-spin text-[#52632B]' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
               <div className="hidden 2xl:flex text-xs text-gray-500 dark:text-gray-400 items-center gap-1.5 font-mono">
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                 <span>Multi-Region: Active</span>
@@ -1144,6 +1257,46 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3 sm:gap-4">
+            {/* Bilingual Licensing Language Toggle (EN / FR) */}
+            <div
+              id="header-bilingual-toggle-container"
+              className="flex items-center rounded-lg border border-gray-200 dark:border-neutral-800 bg-gray-50 dark:bg-neutral-900 p-0.5 shadow-xs"
+              title="Toggle Platform Language (Ontario Bilingual Licensing Compliance)"
+            >
+              <button
+                id="header-lang-btn-en"
+                type="button"
+                onClick={() => {
+                  setLanguage('en');
+                  showToast('Language set to English (Official CCEYA)');
+                  logAudit('LANGUAGE_SWITCH', 'system/localization', 'Switched UI to English');
+                }}
+                className={`px-2 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  language === 'en'
+                    ? 'bg-white dark:bg-neutral-800 text-[#52632B] dark:text-[#E5A910] shadow-xs'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-neutral-200'
+                }`}
+              >
+                <span>EN</span>
+              </button>
+              <button
+                id="header-lang-btn-fr"
+                type="button"
+                onClick={() => {
+                  setLanguage('fr');
+                  showToast('Langue changée en Français (Loi sur les services en français)');
+                  logAudit('LANGUAGE_SWITCH', 'system/localization', 'Switched UI to French (CCEYA Bilingual)');
+                }}
+                className={`px-2 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  language === 'fr'
+                    ? 'bg-white dark:bg-neutral-800 text-[#52632B] dark:text-[#E5A910] shadow-xs'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-neutral-200'
+                }`}
+              >
+                <span>FR</span>
+              </button>
+            </div>
+
             {/* Global Subscription & Trial Status Badge Button */}
             <button
               id="header-subscription-status-button"
@@ -1218,12 +1371,28 @@ export default function App() {
             <ProviderDashboard
               childrenList={childrenList}
               safetyTasks={safetyTasks}
+              staffList={staffList}
+              rooms={daycareRooms}
+              onUpdateStaff={setStaffList}
+              onUpdateRooms={setDaycareRooms}
               onNavigateTab={setActiveTab}
               onOpenQuickAction={handleOpenQuickAction}
               onSelectChild={(id) => {
                 setSelectedChildId(id);
                 setActiveTab('children');
               }}
+              onLogAudit={logAudit}
+            />
+          )}
+
+          {activeTab === 'staff_scheduling' && (
+            <StaffSchedulingModule
+              staffList={staffList}
+              rooms={daycareRooms}
+              childrenList={childrenList}
+              onUpdateStaff={setStaffList}
+              onUpdateRooms={setDaycareRooms}
+              onLogAudit={logAudit}
             />
           )}
 

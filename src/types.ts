@@ -243,6 +243,56 @@ export interface IncidentReport {
   hazardSeverity?: 'High' | 'Critical' | 'Medium';
   hazardArea?: string;
   judgeVerificationStamp?: string;
+  locationZone?: string;
+  floorX?: number; // percentage or px coordinate on floor plan (0-100 or canvas width)
+  floorY?: number; // percentage or px coordinate on floor plan
+}
+
+export interface StaffMember {
+  id: string;
+  fullName: string;
+  role: 'Lead RECE' | 'RECE' | 'Early Childhood Assistant (ECA)' | 'Special Needs Resource' | 'Float Educator';
+  registrationNumber?: string; // e.g., Ontario CECE #64281
+  certifications: string[]; // e.g. ['Standard First Aid & CPR-C', 'Food Handler Safety', 'CCEYA Ratio Certified']
+  shiftStart: string; // '07:30'
+  shiftEnd: string; // '15:30'
+  status: 'On Duty' | 'On Break' | 'Scheduled' | 'Off Duty';
+  assignedRoomId: string;
+  assignedChildrenIds: string[];
+  avatarUrl: string;
+  phone: string;
+  isBilingualFr?: boolean;
+}
+
+export interface DaycareRoom {
+  id: string;
+  name: string;
+  nameFr: string;
+  category: 'infant' | 'toddler' | 'preschool' | 'multiauto' | 'outdoor';
+  ageRangeDescription: string;
+  ageRangeDescriptionFr: string;
+  legalMaxRatio: number; // e.g., 3 for infant (1:3), 5 for toddler (1:5), 8 for preschool (1:8)
+  regulatoryStandard: string; // e.g., 'CCEYA O. Reg. 137/15 S. 8'
+  capacity: number;
+  assignedStaffIds: string[];
+  assignedChildIds: string[];
+  floorPlanZone: string;
+  color: string;
+}
+
+export interface RatioConflict {
+  id: string;
+  roomId: string;
+  roomName: string;
+  currentChildrenCount: number;
+  currentStaffCount: number;
+  legalMaxRatio: number;
+  actualRatio: string;
+  requiredRatio: string;
+  deficit: number;
+  severity: 'CRITICAL' | 'WARNING' | 'COMPLIANT';
+  suggestedRemediation: string;
+  suggestedRemediationFr: string;
 }
 
 
@@ -332,4 +382,5 @@ export interface PayPalGatewayConfig {
   hasCredentials: boolean;
   environment: string;
   status: 'CONNECTED' | 'SANDBOX_READY' | 'CONFIGURED';
+  webhookId?: string;
 }

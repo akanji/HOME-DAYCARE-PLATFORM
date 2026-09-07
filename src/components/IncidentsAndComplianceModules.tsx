@@ -11,9 +11,11 @@ import {
   UserCheck,
   AlertCircle,
   Info,
+  Compass,
 } from 'lucide-react';
 import { IncidentReport, SafetyTask } from '../types';
 import { LICENSING_REGIONS, LicensingRegionRule } from '../mockData';
+import { FloorPlanHeatmap } from './FloorPlanHeatmap';
 
 interface IncidentsProps {
   incidents: IncidentReport[];
@@ -34,7 +36,7 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
   onAddSafetyTask,
   onLogAudit,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'tasks' | 'incidents'>('tasks');
+  const [activeSubTab, setActiveSubTab] = useState<'tasks' | 'incidents' | 'heatmap'>('tasks');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [incidentFilter, setIncidentFilter] = useState<'all' | 'drafts' | 'finalized'>('all');
   const [showNewIncidentModal, setShowNewIncidentModal] = useState(false);
@@ -116,6 +118,7 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border border-neutral-200 dark:border-neutral-800 p-1 bg-neutral-100/70 dark:bg-neutral-900">
             <button
+              id="subtab-safety-tasks"
               onClick={() => setActiveSubTab('tasks')}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
                 activeSubTab === 'tasks'
@@ -126,6 +129,7 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
               Safety Tasks ({safetyTasks.length})
             </button>
             <button
+              id="subtab-incident-logs"
               onClick={() => setActiveSubTab('incidents')}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold ${
                 activeSubTab === 'incidents'
@@ -134,6 +138,18 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
               }`}
             >
               Incident Logs ({incidents.length})
+            </button>
+            <button
+              id="subtab-danger-heatmap"
+              onClick={() => setActiveSubTab('heatmap')}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 ${
+                activeSubTab === 'heatmap'
+                  ? 'bg-white dark:bg-neutral-800 text-[#52632B] dark:text-[#E5A910] shadow-xs'
+                  : 'text-neutral-600'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Danger Heatmap</span>
             </button>
           </div>
 
@@ -146,7 +162,7 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
               <Plus className="w-4 h-4" />
               <span>New Task</span>
             </button>
-          ) : (
+          ) : activeSubTab === 'incidents' ? (
             <button
               id="report-incident-btn"
               onClick={() => setShowNewIncidentModal(true)}
@@ -155,7 +171,7 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
               <AlertTriangle className="w-4 h-4 text-[#E5A910]" />
               <span>Report Incident</span>
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -374,6 +390,14 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
               })}
           </div>
         </div>
+      )}
+
+      {/* Sub-View: Floor Plan Danger Zone Heatmap */}
+      {activeSubTab === 'heatmap' && (
+        <FloorPlanHeatmap
+          incidents={incidents}
+          onAddSafetyTask={onAddSafetyTask}
+        />
       )}
 
       {/* Review & Finalize Draft Modal */}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   CheckCircle,
@@ -15,24 +15,75 @@ import {
   LogOut,
   ChevronRight,
   ShieldCheck,
+  Calendar,
+  Scale,
+  Sparkles,
 } from 'lucide-react';
-import { Child, SafetyTask } from '../types';
+import { Child, SafetyTask, StaffMember, DaycareRoom } from '../types';
+import { StaffSchedulingModule } from './StaffSchedulingModule';
+import { INITIAL_STAFF_MEMBERS, INITIAL_DAYCARE_ROOMS } from '../data/staffAndRoomsData';
+import { useLanguage } from '../context/LanguageContext';
 
 interface ProviderDashboardProps {
   childrenList: Child[];
   safetyTasks: SafetyTask[];
+  staffList?: StaffMember[];
+  rooms?: DaycareRoom[];
+  onUpdateStaff?: (staff: StaffMember[]) => void;
+  onUpdateRooms?: (rooms: DaycareRoom[]) => void;
   onNavigateTab: (tab: string) => void;
   onOpenQuickAction: (action: string) => void;
   onSelectChild: (childId: string) => void;
+  onLogAudit?: (action: string, resource: string, details: string) => void;
+  initialSubTab?: 'overview' | 'scheduling';
 }
 
 export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
   childrenList,
   safetyTasks,
+  staffList,
+  rooms,
+  onUpdateStaff,
+  onUpdateRooms,
   onNavigateTab,
   onOpenQuickAction,
   onSelectChild,
+  onLogAudit,
+  initialSubTab = 'overview',
 }) => {
+  const { language, t } = useLanguage();
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'scheduling'>(initialSubTab);
+
+  // Local state fallback if not managed at App level
+  const [localStaffList, setLocalStaffList] = useState<StaffMember[]>(staffList || INITIAL_STAFF_MEMBERS);
+  const [localRooms, setLocalRooms] = useState<DaycareRoom[]>(rooms || INITIAL_DAYCARE_ROOMS);
+
+  const effectiveStaff = staffList || localStaffList;
+  const effectiveRooms = rooms || localRooms;
+
+  const handleStaffUpdate = (newStaff: StaffMember[]) => {
+    if (onUpdateStaff) {
+      onUpdateStaff(newStaff);
+    } else {
+      setLocalStaffList(newStaff);
+    }
+  };
+
+  const handleRoomsUpdate = (newRooms: DaycareRoom[]) => {
+    if (onUpdateRooms) {
+      onUpdateRooms(newRooms);
+    } else {
+      setLocalRooms(newRooms);
+    }
+  };
+
+  // Check overall ratio conflict status across rooms
+  const hasRatioConflict = effectiveRooms.some((room) => {
+    const assignedStaff = effectiveStaff.filter((s) => s.assignedRoomId === room.id && s.shiftStatus !== 'off');
+    const capacity = assignedStaff.length * room.legalMaxRatio;
+    return room.currentChildrenCount > capacity;
+  });
+
   const checkedInCount = childrenList.filter((c) => c.isCheckedIn).length;
   const totalCapacity = 10;
   const expectedToday = 9;
@@ -43,6 +94,63 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
 
   return (
     <div className="space-y-5 font-sans">
+      {/* Top Dashboard Navigation Sub-Tabs: Overview vs. Staff Scheduling */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-[#181a15] p-2 rounded-xl border border-gray-200 dark:border-neutral-800 shadow-xs">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <button
+            id="provider-dashboard-tab-overview"
+            onClick={() => setActiveSubTab('overview')}
+            className={`px-4 py-2 rounded-lg text-xs font-mono font-bold uppercase transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeSubTab === 'overview'
+                ? 'bg-[#52632B] text-white shadow-xs border border-[#E5A910]/40'
+                : 'text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>{language === 'fr' ? '1. Opérations & Supervision' : '1. Overview & Live Vision'}</span>
+          </button>
+
+          <button
+            id="provider-dashboard-tab-scheduling"
+            onClick={() => setActiveSubTab('scheduling')}
+            className={`px-4 py-2 rounded-lg text-xs font-mono font-bold uppercase transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeSubTab === 'scheduling'
+                ? 'bg-[#52632B] text-white shadow-xs border border-[#E5A910]/40'
+                : 'text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>{language === 'fr' ? '2. Planification du personnel' : '2. Staff Scheduling'}</span>
+            <span
+              className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-bold uppercase ${
+                hasRatioConflict
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 animate-pulse'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}
+            >
+              {hasRatioConflict ? (language === 'fr' ? 'Déficit Ratio' : 'Ratio Deficit') : (language === 'fr' ? 'Ratios Conformes' : 'CCEYA Valid')}
+            </span>
+          </button>
+        </div>
+
+        <div className="hidden lg:flex items-center gap-2 text-xs font-mono text-gray-500 pr-2">
+          <Scale className="w-3.5 h-3.5 text-[#52632B]" />
+          <span>Ontario CCEYA Ratio Watchdog Active</span>
+        </div>
+      </div>
+
+      {/* Conditionally Render: Overview vs. Staff Scheduling */}
+      {activeSubTab === 'scheduling' ? (
+        <StaffSchedulingModule
+          staffList={effectiveStaff}
+          rooms={effectiveRooms}
+          childrenList={childrenList}
+          onUpdateStaff={handleStaffUpdate}
+          onUpdateRooms={handleRoomsUpdate}
+          onLogAudit={onLogAudit}
+        />
+      ) : (
+        <>
       {/* High Density System Overview Grid (Exact Design Layout) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* Computer Vision Live Feed: Main Playroom (8 cols) */}
@@ -476,6 +584,8 @@ export const ProviderDashboard: React.FC<ProviderDashboardProps> = ({
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

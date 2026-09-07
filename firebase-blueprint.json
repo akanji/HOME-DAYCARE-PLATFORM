@@ -130,6 +130,21 @@
         { "collection": "users", "field": "providerId" },
         { "collection": "children", "field": "childId" }
       ]
+    },
+    "syncState": {
+      "path": "syncState/{syncId}",
+      "description": "Local state sync telemetry and timestamps pushed to Firestore",
+      "fields": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "clientLocalTime": { "type": "string" },
+        "childrenCount": { "type": "number" },
+        "checkedInCount": { "type": "number" },
+        "safetyTasksCount": { "type": "number" },
+        "lastAction": { "type": "string" },
+        "syncedBy": { "type": "string" }
+      },
+      "relationships": []
     }
   }
 }

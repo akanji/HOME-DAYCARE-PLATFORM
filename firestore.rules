@@ -85,5 +85,10 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow write: if isAdmin();
     }
+
+    // Local State Synchronization Records
+    match /syncState/{syncId} {
+      allow read, write: if true;
+    }
   }
 }

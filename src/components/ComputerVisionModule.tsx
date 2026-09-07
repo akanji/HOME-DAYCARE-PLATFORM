@@ -22,6 +22,13 @@ import {
   Scale,
   FileText,
   ExternalLink,
+  Mic,
+  MicOff,
+  Radio,
+  Square,
+  X,
+  Play,
+  Volume1,
 } from 'lucide-react';
 import { VisionAnalysisResult, DetectedObject, SafetyTask, IncidentReport } from '../types';
 import { VisionHeatmapD3 } from './VisionHeatmapD3';
@@ -103,8 +110,197 @@ export const ComputerVisionModule: React.FC<ComputerVisionModuleProps> = ({
   const [lastDraftReportId, setLastDraftReportId] = useState<string | null>(null);
   const [audioAlertActiveIndicator, setAudioAlertActiveIndicator] = useState(false);
 
+  // Voice Command Hazard Logger State
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [lastVoiceResult, setLastVoiceResult] = useState<{
+    transcription: string;
+    hazard_type: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    category: string;
+    description: string;
+    immediate_remediation: string;
+    confidence: number;
+    regulatory_code: string;
+    suggested_task_area: string;
+    suggested_task_title: string;
+  } | null>(null);
+
+  const recognitionRef = useRef<any>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
+
+  // Clean up speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch (e) {
+          // ignore
+        }
+      }
+    };
+  }, []);
+
+  // Initialize Speech Recognition if supported in browser
+  const startListening = () => {
+    setVoiceError(null);
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceError('Direct browser speech recognition is not supported in this environment. You can select one of the quick speech presets or edit the observation text below.');
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            setVoiceTranscript((prev) => (prev ? prev + ' ' : '') + event.results[i][0].transcript);
+          } else {
+            interim += event.results[i][0].transcript;
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+          setVoiceError('Microphone permission blocked or restricted in iframe. Quick speech presets are available below for instant one-click simulation.');
+        } else {
+          setVoiceError(`Audio recognition status: ${event.error}. Preset options are available below.`);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err: any) {
+      console.warn('Speech recognition start failed:', err);
+      setVoiceError('Could not access microphone directly. Please select a quick observation scenario or type below.');
+      setIsListening(false);
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // ignore
+      }
+    }
+    setIsListening(false);
+  };
+
+  const handleProcessVoiceCommand = async (customText?: string) => {
+    const textToProcess = (customText !== undefined ? customText : voiceTranscript).trim();
+    if (!textToProcess) {
+      setVoiceError('Please speak into your microphone or select an observation scenario prompt first.');
+      return;
+    }
+
+    stopListening();
+    setIsProcessingVoice(true);
+    setVoiceError(null);
+
+    try {
+      const response = await safeFetchJson<{
+        success: boolean;
+        source: string;
+        data: {
+          transcription: string;
+          hazard_type: string;
+          severity: 'critical' | 'high' | 'medium' | 'low';
+          category: string;
+          description: string;
+          immediate_remediation: string;
+          confidence: number;
+          regulatory_code: string;
+          suggested_task_area: string;
+          suggested_task_title: string;
+        };
+      }>('/api/gemini/voice-hazard-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spokenTranscript: textToProcess,
+          sceneContext: selectedScene.name,
+        }),
+      });
+
+      if (response.ok && response.data?.data) {
+        const resData = response.data.data;
+        setLastVoiceResult(resData);
+
+        // 1. Add observation to active analysisResult
+        const newObs = {
+          type: resData.hazard_type,
+          description: `[Voice Observation] ${resData.description}`,
+          confidence: resData.confidence || 0.95,
+          severity: resData.severity === 'critical' ? 'high' : resData.severity,
+        };
+
+        setAnalysisResult((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            observations: [newObs, ...(prev.observations || [])],
+          };
+        });
+
+        // 2. Automatically log a Safety Task in the system
+        onAddSafetyTask({
+          area: `${resData.suggested_task_area || selectedScene.name}`,
+          observation: `${resData.description} • Action: ${resData.immediate_remediation}`,
+          priority: resData.severity === 'critical' || resData.severity === 'high' ? 'High' : resData.severity === 'medium' ? 'Medium' : 'Low',
+          assignedTo: 'Lead Daycare Provider',
+          status: 'Open',
+        });
+
+        // 3. Trigger alert chime for elevated hazards
+        if (resData.severity === 'critical' || resData.severity === 'high' || resData.severity === 'medium') {
+          triggerAudioAlert(resData.severity === 'critical' ? 'high' : resData.severity);
+        }
+
+        // 4. Log regulatory audit event
+        onLogAudit(
+          'VOICE_HAZARD_LOGGED',
+          `safetyTasks/voice-${Date.now()}`,
+          `Voice observation logged: "${resData.transcription}". Gemini categorized as ${resData.hazard_type} (${resData.severity}). Regulatory ref: ${resData.regulatory_code}.`
+        );
+
+        showToast(`Voice observation transcribed & categorized: ${resData.hazard_type.replace(/_/g, ' ')} (${resData.severity.toUpperCase()})`);
+      }
+    } catch (err: any) {
+      console.error('Voice hazard categorization failed:', err);
+      setVoiceError(err.message || 'Failed to process voice hazard with Gemini.');
+    } finally {
+      setIsProcessingVoice(false);
+    }
+  };
 
   // Sync external scene change if provided
   useEffect(() => {
@@ -424,6 +620,21 @@ export const ComputerVisionModule: React.FC<ComputerVisionModuleProps> = ({
               <span>{isPipActive ? 'PiP Mode: Active' : 'Picture-in-Picture'}</span>
             </button>
           )}
+
+          {/* Voice Command Safety Observation Button */}
+          <button
+            id="voice-command-hazard-button"
+            onClick={() => {
+              setIsVoiceModalOpen(true);
+              setVoiceError(null);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded text-xs font-mono font-bold bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-700 hover:to-amber-700 text-white shadow-xs transition-all uppercase tracking-tight active:scale-95 border border-rose-400/40 cursor-pointer"
+            title="Speak to log a safety hazard — Gemini transcribes & categorizes observation into safety tasks"
+          >
+            <Mic className="w-3.5 h-3.5 text-white animate-pulse" />
+            <span>Voice Command</span>
+            <span className="hidden sm:inline text-[9px] bg-white/20 px-1 py-0.2 rounded uppercase">AI Transcribe</span>
+          </button>
 
           <input
             type="file"
@@ -942,6 +1153,295 @@ export const ComputerVisionModule: React.FC<ComputerVisionModuleProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Voice Command Safety Observation Modal & Categorization Console */}
+      {isVoiceModalOpen && (
+        <div
+          id="voice-command-modal-backdrop"
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isListening && !isProcessingVoice) {
+              setIsVoiceModalOpen(false);
+            }
+          }}
+        >
+          <div
+            id="voice-command-dialog"
+            className="bg-white dark:bg-[#1A1D16] border border-gray-200 dark:border-neutral-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative space-y-5 animate-in fade-in zoom-in-95 duration-200"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-gray-200 dark:border-neutral-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-gradient-to-br from-rose-500/20 to-amber-500/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900">
+                  <Mic className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-gray-900 dark:text-neutral-100 font-mono uppercase tracking-wider">
+                      Voice Command Safety Observation
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800">
+                      GEMINI AI CLASSIFIER
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
+                    Speak your safety observation. Gemini transcribes and categorizes the hazard into the compliance audit log.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                id="close-voice-modal-button"
+                onClick={() => {
+                  stopListening();
+                  setIsVoiceModalOpen(false);
+                }}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Context Badge */}
+            <div className="flex items-center justify-between text-xs font-mono bg-gray-50 dark:bg-neutral-900 p-2.5 rounded-lg border border-gray-200 dark:border-neutral-800">
+              <span className="text-gray-500 dark:text-neutral-400 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-[#52632B]" />
+                Active Surveillance Zone:
+              </span>
+              <span className="font-bold text-gray-800 dark:text-neutral-200">{selectedScene.name}</span>
+            </div>
+
+            {/* Audio Recording & Speech Visualizer */}
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-[#141612] border border-gray-200 dark:border-neutral-800 text-center space-y-4">
+              <div className="flex flex-col items-center justify-center gap-3">
+                <button
+                  id="toggle-mic-listening-button"
+                  type="button"
+                  onClick={() => {
+                    if (isListening) {
+                      stopListening();
+                    } else {
+                      startListening();
+                    }
+                  }}
+                  className={`relative w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 ${
+                    isListening
+                      ? 'bg-rose-600 text-white ring-8 ring-rose-400/30 animate-pulse'
+                      : 'bg-[#52632B] hover:bg-[#3E4C1E] text-white hover:scale-105'
+                  }`}
+                  title={isListening ? 'Click to Stop Listening' : 'Click to Speak Observation'}
+                >
+                  {isListening ? <Square className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+                  {isListening && (
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-4 w-4 bg-rose-500"></span>
+                    </span>
+                  )}
+                </button>
+
+                <div>
+                  <div className="text-sm font-bold text-gray-900 dark:text-neutral-100 font-mono">
+                    {isListening ? 'Listening… Speak your safety observation now' : 'Tap to Start Speaking'}
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
+                    {isListening
+                      ? 'System transcribing live speech in real-time...'
+                      : 'Or select a quick-speech scenario preset below'}
+                  </p>
+                </div>
+
+                {/* Animated Waveform Bars when listening */}
+                {isListening && (
+                  <div className="flex items-center justify-center gap-1.5 h-6">
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-3"></span>
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.4s_ease-in-out_infinite] h-6"></span>
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.7s_ease-in-out_infinite] h-4"></span>
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.5s_ease-in-out_infinite] h-5"></span>
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.3s_ease-in-out_infinite] h-6"></span>
+                    <span className="w-1.5 bg-rose-500 rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-3"></span>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Speech Scenario Presets (Instant One-Click Provider Simulation) */}
+              <div className="space-y-1.5 text-left pt-2 border-t border-gray-200 dark:border-neutral-800">
+                <span className="text-[11px] font-bold font-mono text-gray-500 dark:text-neutral-400 uppercase tracking-wider block">
+                  Quick Speech Observation Presets (Click to Test):
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs font-mono">
+                  <button
+                    id="preset-speech-slip-hazard"
+                    type="button"
+                    onClick={() => {
+                      setVoiceTranscript('Water spilled near the art sink creating an immediate slip hazard for children');
+                      handleProcessVoiceCommand('Water spilled near the art sink creating an immediate slip hazard for children');
+                    }}
+                    className="text-left p-2 rounded bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-2 text-gray-700 dark:text-neutral-200"
+                  >
+                    <span className="text-base">💧</span>
+                    <span className="line-clamp-1">Water spilled near art sink (Slip risk)</span>
+                  </button>
+
+                  <button
+                    id="preset-speech-trip-cord"
+                    type="button"
+                    onClick={() => {
+                      setVoiceTranscript('Power extension cord stretched across the central playroom walkway causing trip danger');
+                      handleProcessVoiceCommand('Power extension cord stretched across the central playroom walkway causing trip danger');
+                    }}
+                    className="text-left p-2 rounded bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-2 text-gray-700 dark:text-neutral-200"
+                  >
+                    <span className="text-base">⚡</span>
+                    <span className="line-clamp-1">Power cord across walkway (Trip danger)</span>
+                  </button>
+
+                  <button
+                    id="preset-speech-chemical-latch"
+                    type="button"
+                    onClick={() => {
+                      setVoiceTranscript('Cleaning disinfectant cupboard left unlatched and accessible to toddlers');
+                      handleProcessVoiceCommand('Cleaning disinfectant cupboard left unlatched and accessible to toddlers');
+                    }}
+                    className="text-left p-2 rounded bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-2 text-gray-700 dark:text-neutral-200"
+                  >
+                    <span className="text-base">🧪</span>
+                    <span className="line-clamp-1">Cleaning cupboard unlatched (Chemical risk)</span>
+                  </button>
+
+                  <button
+                    id="preset-speech-sharp-toy"
+                    type="button"
+                    onClick={() => {
+                      setVoiceTranscript('Broken wooden block with sharp splintered edge found on the reading rug');
+                      handleProcessVoiceCommand('Broken wooden block with sharp splintered edge found on the reading rug');
+                    }}
+                    className="text-left p-2 rounded bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center gap-2 text-gray-700 dark:text-neutral-200"
+                  >
+                    <span className="text-base">🪵</span>
+                    <span className="line-clamp-1">Broken toy with sharp edge on rug</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Spoken Transcript Input / Edit Area */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <label htmlFor="voice-transcript-input" className="font-bold text-gray-700 dark:text-neutral-300">
+                  Spoken Observation Transcript:
+                </label>
+                {voiceTranscript && (
+                  <button
+                    type="button"
+                    onClick={() => setVoiceTranscript('')}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200"
+                  >
+                    Clear Text
+                  </button>
+                )}
+              </div>
+              <textarea
+                id="voice-transcript-input"
+                rows={3}
+                value={voiceTranscript}
+                onChange={(e) => setVoiceTranscript(e.target.value)}
+                placeholder="Spoken words will appear here automatically, or you can type/edit your observation directly..."
+                className="w-full p-3 rounded-xl bg-white dark:bg-neutral-900 border border-gray-300 dark:border-neutral-700 text-sm text-gray-900 dark:text-neutral-100 focus:ring-2 focus:ring-[#52632B] focus:border-transparent outline-none transition-all font-sans"
+              />
+            </div>
+
+            {/* Error or Permission Notice */}
+            {voiceError && (
+              <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2 font-mono">
+                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>{voiceError}</span>
+              </div>
+            )}
+
+            {/* Last Result Card (Gemini Categorization Confirmation) */}
+            {lastVoiceResult && (
+              <div className="p-4 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-700/60 space-y-2.5 animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 font-mono uppercase tracking-wider">
+                      Observation Categorized & Dispatched
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                        lastVoiceResult.severity === 'critical'
+                          ? 'bg-rose-600 text-white'
+                          : lastVoiceResult.severity === 'high'
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-blue-600 text-white'
+                      }`}
+                    >
+                      {lastVoiceResult.severity.toUpperCase()} SEVERITY
+                    </span>
+                    <span className="text-[10px] font-mono bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 px-2 py-0.5 rounded font-bold">
+                      {Math.round(lastVoiceResult.confidence * 100)}% CONF
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-xs space-y-1 text-emerald-950 dark:text-emerald-100 font-mono">
+                  <div>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">Hazard Type:</span>{' '}
+                    {lastVoiceResult.hazard_type.replace(/_/g, ' ')}
+                  </div>
+                  <div>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">Regulatory Reference:</span>{' '}
+                    {lastVoiceResult.regulatory_code}
+                  </div>
+                  <div>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">Observation:</span>{' '}
+                    <span className="font-sans italic">"{lastVoiceResult.description}"</span>
+                  </div>
+                  <div>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">Immediate Action:</span>{' '}
+                    {lastVoiceResult.immediate_remediation}
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-sans border-t border-emerald-200 dark:border-emerald-800/60 pt-2">
+                  ✓ Automatically logged to Computer Vision feed and added to open Safety Tasks for daycare compliance records.
+                </p>
+              </div>
+            )}
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <button
+                id="cancel-voice-dialog-button"
+                type="button"
+                onClick={() => {
+                  stopListening();
+                  setIsVoiceModalOpen(false);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-mono font-bold text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors uppercase"
+              >
+                Close
+              </button>
+
+              <button
+                id="submit-voice-to-gemini-button"
+                type="button"
+                onClick={() => handleProcessVoiceCommand()}
+                disabled={isProcessingVoice || !voiceTranscript.trim()}
+                className="px-5 py-2.5 rounded-lg text-xs font-mono font-bold bg-[#52632B] hover:bg-[#3E4C1E] text-white flex items-center gap-2 shadow-sm transition-all uppercase tracking-tight disabled:opacity-50 active:scale-95 cursor-pointer"
+              >
+                <Sparkles className={`w-4 h-4 text-[#E5A910] ${isProcessingVoice ? 'animate-spin' : ''}`} />
+                <span>
+                  {isProcessingVoice ? 'Gemini Categorizing Hazard…' : 'Transcribe & Categorize with Gemini'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

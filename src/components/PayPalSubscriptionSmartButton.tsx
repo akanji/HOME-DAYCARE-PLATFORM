@@ -169,13 +169,6 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
             });
           },
           onApprove: function (data: any, _actions: any) {
-            try {
-              if (data?.subscriptionID) {
-                alert(data.subscriptionID);
-              }
-            } catch {
-              // Iframe sandbox may suppress native alert
-            }
             if (data?.subscriptionID) {
               onApproveSuccess(data.subscriptionID, planType);
             }
@@ -216,7 +209,7 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
       {sdkStatus === 'loading' && (
         <div className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 text-amber-800 dark:text-amber-300 text-xs font-mono">
           <div className="w-3.5 h-3.5 rounded-full border-2 border-amber-600 border-t-transparent animate-spin" />
-          <span>Retrieving credentials & connecting to PayPal SDK…</span>
+          <span>Connecting securely to PayPal…</span>
         </div>
       )}
 
@@ -229,11 +222,11 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
             className="w-full py-3 rounded-xl bg-[#FFC439] hover:bg-[#F2BA36] text-[#003087] text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-xs transition-transform active:scale-[0.99] cursor-pointer border border-[#003087]/20"
           >
             <CreditCard className="w-4 h-4 text-[#003087]" />
-            <span>{planLabel} (PayPal Gateway)</span>
+            <span>{planLabel}</span>
           </button>
           <p className="text-[10px] text-center text-gray-500 font-mono flex items-center justify-center gap-1">
             <AlertCircle className="w-3 h-3 text-amber-500" />
-            <span>Server proxy active • Instant Sandbox Authorization</span>
+            <span>Instant PayPal Checkout • SSL Protected</span>
           </p>
         </div>
       )}
