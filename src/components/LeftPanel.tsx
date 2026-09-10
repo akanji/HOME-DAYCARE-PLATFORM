@@ -704,22 +704,41 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
             </div>
           </div>
 
-          {/* Dark Mode Toggle Row matching High Density design */}
+          {/* Dark Mode / Light Mode Toggle Row matching High Density design */}
           <div className="flex items-center justify-between pt-1">
-            <span className="text-white text-xs font-bold uppercase tracking-wider font-mono">
-              DARK MODE
+            <span className="text-white text-xs font-bold uppercase tracking-wider font-mono flex items-center gap-1.5">
+              {darkMode ? (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-[#E5A910]" />
+                  <span>DARK THEME</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-300" />
+                  <span>LIGHT THEME</span>
+                </>
+              )}
             </span>
             <button
               id="theme-toggle-button"
               onClick={() => setDarkMode(!darkMode)}
-              className="w-10 h-5 bg-[#556B2F] border border-white/20 rounded-full relative p-0.5 cursor-pointer focus:outline-none transition-colors"
-              title="Toggle Dark / Light Theme"
+              className={`w-11 h-6 border border-white/20 rounded-full relative p-0.5 cursor-pointer focus:outline-none transition-colors ${
+                darkMode ? 'bg-[#E5A910]/40 border-[#E5A910]/80' : 'bg-[#556B2F]'
+              }`}
+              title={darkMode ? "Switch to Light Theme" : "Switch to Dark Theme"}
+              aria-label={darkMode ? "Switch to Light Theme" : "Switch to Dark Theme"}
             >
               <div
-                className={`w-3.5 h-3.5 bg-white rounded-full transition-transform ${
+                className={`w-4 h-4 bg-white rounded-full transition-transform shadow-xs flex items-center justify-center ${
                   darkMode ? 'translate-x-5' : 'translate-x-0'
                 }`}
-              />
+              >
+                {darkMode ? (
+                  <Moon className="w-2.5 h-2.5 text-neutral-900" />
+                ) : (
+                  <Sun className="w-2.5 h-2.5 text-amber-600" />
+                )}
+              </div>
             </button>
           </div>
 

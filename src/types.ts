@@ -240,7 +240,7 @@ export interface IncidentReport {
   licensingNotificationRequired: boolean;
   status?: 'Draft' | 'Submitted' | 'Resolved';
   source?: 'Manual' | 'Computer Vision Judge Agent';
-  hazardSeverity?: 'High' | 'Critical' | 'Medium';
+  hazardSeverity?: 'Low' | 'Medium' | 'High' | 'Critical';
   hazardArea?: string;
   judgeVerificationStamp?: string;
   locationZone?: string;
@@ -372,15 +372,40 @@ export interface AuthUser {
   subscription: UserSubscription;
   billingHistory: BillingInvoice[];
   hasFullAccess?: boolean;
+  subscription_status?: 'ACTIVE' | 'TRIALING' | 'EXPIRED' | 'CANCELLED' | string;
+  trial_ends_at?: string | Date;
+  paypal_subscription_id?: string | null;
+  plan_id?: string | null;
+}
+
+export interface UserAccessCheckInput {
+  subscription_status?: string;
+  trial_ends_at?: string | Date | number | null;
+  subscription?: {
+    status?: string;
+    [key: string]: any;
+  };
+  trial?: {
+    expiresAt?: string | Date;
+    isExpired?: boolean;
+    [key: string]: any;
+  };
+  [key: string]: any;
 }
 
 export interface PayPalGatewayConfig {
   apiUrl: string;
-  productId: string;
-  planIdMonthly: string;
-  planIdYearly: string;
+  clientId?: string;
+  secretKeyMasked?: string;
+  productId?: string;
+  planIdMonthly?: string;
+  planIdYearly?: string;
   hasCredentials: boolean;
   environment: string;
   status: 'CONNECTED' | 'SANDBOX_READY' | 'CONFIGURED';
   webhookId?: string;
+  sdkUrl?: string;
+  webhookEndpoint?: string;
+  plansConfigured?: boolean;
+  protectionStatus?: string;
 }

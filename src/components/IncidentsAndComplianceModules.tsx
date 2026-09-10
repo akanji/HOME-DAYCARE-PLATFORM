@@ -12,10 +12,17 @@ import {
   AlertCircle,
   Info,
   Compass,
+  FileDown,
+  Download,
+  Flame,
 } from 'lucide-react';
 import { IncidentReport, SafetyTask } from '../types';
 import { LICENSING_REGIONS, LicensingRegionRule } from '../mockData';
 import { FloorPlanHeatmap } from './FloorPlanHeatmap';
+import {
+  generateIncidentReportPdf,
+  generateAllIncidentsSummaryPdf,
+} from '../utils/incidentPdfGenerator';
 
 interface IncidentsProps {
   incidents: IncidentReport[];
@@ -277,12 +284,58 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
             </div>
           )}
 
-          {/* Incidents Filter Bar */}
-          <div className="flex items-center justify-between text-xs">
+          {/* Heatmap Banner highlighting HISTORICAL_INCIDENTS_HEATMAP */}
+          <div className="p-3.5 rounded-xl bg-linear-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/20 border border-amber-200 dark:border-amber-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-2.5">
+              <span className="p-1.5 rounded-lg bg-amber-600 text-white shrink-0">
+                <Compass className="w-4 h-4" />
+              </span>
+              <div>
+                <h4 className="text-xs font-bold font-mono text-amber-950 dark:text-amber-200 uppercase tracking-tight flex items-center gap-2">
+                  <span>Visual Heatmap Overlay: High-Frequency Safety Zones</span>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold">
+                    ARCHIVE LINKED
+                  </span>
+                </h4>
+                <p className="text-[11px] text-amber-900/80 dark:text-amber-300/80 mt-0.5">
+                  Analyze spatial hazard patterns plotted from <code>HISTORICAL_INCIDENTS_HEATMAP</code>. Top danger areas: Art Sink (3 past slips) and Soft Turf Playset (3 past falls).
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="view-heatmap-overlay-btn"
+              onClick={() => setActiveSubTab('heatmap')}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold bg-amber-700 hover:bg-amber-800 text-white flex items-center justify-center gap-1.5 transition-colors shrink-0 shadow-xs cursor-pointer"
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Launch Visual Heatmap</span>
+            </button>
+          </div>
+
+          {/* Incidents Filter & Export Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-neutral-400 uppercase tracking-wider font-mono">
               Incident & Near-Miss Records
             </span>
-            <div className="flex items-center gap-1 font-mono">
+            <div className="flex flex-wrap items-center gap-2 font-mono">
+              <button
+                id="download-full-audit-ledger-pdf"
+                onClick={() => {
+                  generateAllIncidentsSummaryPdf(incidents);
+                  onLogAudit(
+                    'FULL_INCIDENTS_LEDGER_EXPORTED',
+                    'incidents/all',
+                    'Exported complete multi-record incident ledger for regulatory inspection'
+                  );
+                }}
+                className="px-2.5 py-1 rounded-md text-xs font-bold bg-neutral-100 dark:bg-neutral-800 hover:bg-[#52632B] hover:text-white text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Download complete printable multi-incident summary PDF ledger for CCEYA inspection audit"
+              >
+                <Download className="w-3.5 h-3.5 text-[#52632B]" />
+                <span>Audit Ledger (PDF)</span>
+              </button>
+
               {(['all', 'drafts', 'finalized'] as const).map((filter) => (
                 <button
                   key={filter}
@@ -372,19 +425,36 @@ export const IncidentsAndSafetyModule: React.FC<IncidentsProps> = ({
                       </span>
                     </div>
 
-                    {/* Draft Action Workflow Button */}
-                    {isDraft && (
-                      <div className="pt-2 border-t border-amber-200/60 dark:border-amber-800/40 flex items-center justify-end gap-2">
+                    {/* Action Bar: Printable Regulatory Audit PDF & Draft Finalize */}
+                    <div className="pt-2.5 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        id={`download-incident-pdf-${inc.id}`}
+                        onClick={() => {
+                          generateIncidentReportPdf(inc);
+                          onLogAudit(
+                            'INCIDENT_PDF_EXPORTED',
+                            `incidents/${inc.id}`,
+                            `Exported formal printable CCEYA regulatory audit PDF for ${inc.childName}`
+                          );
+                        }}
+                        className="py-1.5 px-3 rounded-lg text-xs font-mono font-bold bg-neutral-100 dark:bg-neutral-800/80 hover:bg-[#52632B] hover:text-white text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Generate and download formal printable PDF summary of an incident report for regulatory audit purposes"
+                      >
+                        <FileDown className="w-3.5 h-3.5 text-[#52632B]" />
+                        <span>Download Regulatory Audit PDF</span>
+                      </button>
+
+                      {isDraft && (
                         <button
                           id={`review-draft-${inc.id}-button`}
                           onClick={() => setReviewingDraft(inc)}
-                          className="w-full py-1.5 px-3 rounded-lg text-xs font-mono font-bold bg-[#52632B] hover:bg-[#435222] text-white flex items-center justify-center gap-1.5 transition-colors uppercase tracking-tight"
+                          className="py-1.5 px-3 rounded-lg text-xs font-mono font-bold bg-[#52632B] hover:bg-[#435222] text-white flex items-center gap-1.5 transition-colors uppercase tracking-tight cursor-pointer"
                         >
                           <CheckCircle className="w-3.5 h-3.5" />
-                          <span>Review, Counter-Sign & Finalize Report</span>
+                          <span>Review & Finalize</span>
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })}

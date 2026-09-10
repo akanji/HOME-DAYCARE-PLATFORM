@@ -13,9 +13,17 @@ import {
   X,
   Camera,
   Compass,
+  Flame,
+  FileDown,
+  TrendingUp,
 } from 'lucide-react';
 import { IncidentReport, SafetyTask } from '../types';
-import { DAYCARE_FLOOR_ZONES, DaycarePhysicalZone } from '../data/staffAndRoomsData';
+import {
+  DAYCARE_FLOOR_ZONES,
+  DaycarePhysicalZone,
+  HISTORICAL_INCIDENTS_HEATMAP,
+} from '../data/staffAndRoomsData';
+import { generateIncidentReportPdf } from '../utils/incidentPdfGenerator';
 import { useLanguage } from '../context/LanguageContext';
 
 interface FloorPlanHeatmapProps {
@@ -36,15 +44,34 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
   const [selectedType, setSelectedType] = useState<string>('All');
   const [selectedSeverity, setSelectedSeverity] = useState<string>('All');
   const [selectedDateRange, setSelectedDateRange] = useState<'all' | '30d' | '90d'>('all');
+  const [historyScope, setHistoryScope] = useState<'all' | 'historical_only' | 'recent_only'>('all');
   const [showHeatGlow, setShowHeatGlow] = useState<boolean>(true);
   const [showLabels, setShowLabels] = useState<boolean>(true);
   const [selectedIncident, setSelectedIncident] = useState<IncidentReport | null>(null);
   const [activeHoverZone, setActiveHoverZone] = useState<DaycarePhysicalZone | null>(null);
   const [taskCreatedToast, setTaskCreatedToast] = useState<string | null>(null);
 
-  // Filtered incidents
+  // Combine runtime incidents and HISTORICAL_INCIDENTS_HEATMAP (deduplicated by ID)
+  const unifiedIncidents = useMemo(() => {
+    const map = new Map<string, IncidentReport>();
+    // Seed with all historical safety incidents
+    HISTORICAL_INCIDENTS_HEATMAP.forEach((item) => {
+      map.set(item.id, item);
+    });
+    // Add or override with live incident state
+    incidents.forEach((item) => {
+      map.set(item.id, item);
+    });
+    return Array.from(map.values());
+  }, [incidents]);
+
+  // Filtered incidents based on user selections
   const filteredIncidents = useMemo(() => {
-    return incidents.filter((inc) => {
+    const historicalIds = new Set(HISTORICAL_INCIDENTS_HEATMAP.map((h) => h.id));
+
+    return unifiedIncidents.filter((inc) => {
+      if (historyScope === 'historical_only' && !historicalIds.has(inc.id)) return false;
+      if (historyScope === 'recent_only' && historicalIds.has(inc.id)) return false;
       if (selectedType !== 'All' && inc.type !== selectedType) return false;
       if (selectedSeverity !== 'All' && inc.hazardSeverity !== selectedSeverity) return false;
       if (selectedDateRange === '30d') {
@@ -58,18 +85,22 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
       }
       return true;
     });
-  }, [incidents, selectedType, selectedSeverity, selectedDateRange]);
+  }, [unifiedIncidents, historyScope, selectedType, selectedSeverity, selectedDateRange]);
 
-  // Aggregate incidents per physical zone to classify danger levels
+  // Aggregate incidents per physical zone to classify danger levels and past frequency
   const zoneDensity = useMemo(() => {
-    const counts: Record<string, { total: number; injuries: number; nearMisses: number; incidents: IncidentReport[] }> = {};
+    const counts: Record<
+      string,
+      { total: number; injuries: number; nearMisses: number; historicalCount: number; incidents: IncidentReport[] }
+    > = {};
+
+    const historicalIds = new Set(HISTORICAL_INCIDENTS_HEATMAP.map((h) => h.id));
 
     DAYCARE_FLOOR_ZONES.forEach((zone) => {
-      counts[zone.id] = { total: 0, injuries: 0, nearMisses: 0, incidents: [] };
+      counts[zone.id] = { total: 0, injuries: 0, nearMisses: 0, historicalCount: 0, incidents: [] };
     });
 
     filteredIncidents.forEach((inc) => {
-      // Find matching zone by locationZone or coordinate bounding box
       let matchedZone = DAYCARE_FLOOR_ZONES.find((z) => z.id === inc.locationZone);
       if (!matchedZone && inc.floorX && inc.floorY) {
         matchedZone = DAYCARE_FLOOR_ZONES.find(
@@ -83,9 +114,12 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
 
       const zoneKey = matchedZone ? matchedZone.id : 'zone-playroom';
       if (!counts[zoneKey]) {
-        counts[zoneKey] = { total: 0, injuries: 0, nearMisses: 0, incidents: [] };
+        counts[zoneKey] = { total: 0, injuries: 0, nearMisses: 0, historicalCount: 0, incidents: [] };
       }
       counts[zoneKey].total += 1;
+      if (historicalIds.has(inc.id)) {
+        counts[zoneKey].historicalCount += 1;
+      }
       if (inc.type === 'Injury') counts[zoneKey].injuries += 1;
       if (inc.type === 'Near-miss') counts[zoneKey].nearMisses += 1;
       counts[zoneKey].incidents.push(inc);
@@ -94,10 +128,16 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
     return counts;
   }, [filteredIncidents]);
 
-  // Danger zones ranked by severity
+  // Danger zones ranked by incident frequency
   const rankedDangerZones = useMemo(() => {
     return DAYCARE_FLOOR_ZONES.map((zone) => {
-      const stats = zoneDensity[zone.id] || { total: 0, injuries: 0, nearMisses: 0, incidents: [] };
+      const stats = zoneDensity[zone.id] || {
+        total: 0,
+        injuries: 0,
+        nearMisses: 0,
+        historicalCount: 0,
+        incidents: [],
+      };
       let riskLevel: 'HIGH' | 'MODERATE' | 'LOW' = 'LOW';
       if (stats.total >= 3 || stats.injuries >= 2) {
         riskLevel = 'HIGH';
@@ -248,6 +288,26 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Historical Data Filter */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono text-gray-400 uppercase">Source:</span>
+              <div className="flex rounded border border-gray-200 dark:border-neutral-700 overflow-hidden font-mono text-[11px]">
+                <button
+                  onClick={() => setHistoryScope('all')}
+                  className={`px-2 py-1 ${historyScope === 'all' ? 'bg-[#52632B] text-white font-bold' : 'bg-white dark:bg-neutral-900 text-gray-600'}`}
+                >
+                  All Hotspots
+                </button>
+                <button
+                  onClick={() => setHistoryScope('historical_only')}
+                  className={`px-2 py-1 ${historyScope === 'historical_only' ? 'bg-amber-600 text-white font-bold' : 'bg-white dark:bg-neutral-900 text-gray-600'}`}
+                  title="Filter to past safety incident coordinates from HISTORICAL_INCIDENTS_HEATMAP"
+                >
+                  Past Incidents Archive
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Toggle Switches */}
@@ -271,6 +331,36 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
               />
               <span>Room Labels</span>
             </label>
+          </div>
+        </div>
+
+        {/* High Frequency Past Incidents Callout Banner */}
+        <div className="mt-4 pt-3 border-t border-gray-100 dark:border-neutral-800">
+          <div className="p-3 rounded-lg bg-linear-to-r from-rose-50 via-amber-50 to-orange-50 dark:from-rose-950/40 dark:via-amber-950/30 dark:to-orange-950/20 border border-rose-200 dark:border-rose-900/60 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-start md:items-center gap-2.5">
+              <span className="p-1.5 rounded-md bg-rose-600 text-white shrink-0 mt-0.5 md:mt-0">
+                <Flame className="w-4 h-4" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold font-mono text-rose-950 dark:text-rose-200 uppercase tracking-tight">
+                    Highest Frequency Past Safety Incident Areas (Historical Heatmap Archive)
+                  </span>
+                  <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
+                    HISTORICAL_INCIDENTS_HEATMAP ACTIVE
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-0.5">
+                  Identified top historical incident concentrations: <strong>Art & Sensory Water Basin</strong> (3 past slips), <strong>Outdoor Soft Turf Yard</strong> (3 past scrapes & trips), and <strong>Transition Hallway</strong> (2 past door pinch incidents).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 font-mono text-xs">
+              <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-white/80 dark:bg-neutral-900/80 px-2 py-1 rounded border border-rose-200 dark:border-rose-800">
+                Top Zone: {rankedDangerZones[0]?.name || 'Art & Sensory'} ({rankedDangerZones[0]?.stats.total || 3}x)
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -388,6 +478,31 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
                         >
                           {zone.cceyaCode} • {stats.total} {stats.total === 1 ? 'incident' : 'incidents'}
                         </text>
+
+                        {/* Highest Frequency of Past Safety Incidents Badge */}
+                        {stats.total >= 3 && (
+                          <g>
+                            <rect
+                              x={zone.x + 12}
+                              y={zone.y + 42}
+                              width={195}
+                              height={13}
+                              rx="3"
+                              fill="#ef4444"
+                              opacity="0.9"
+                            />
+                            <text
+                              x={zone.x + 16}
+                              y={zone.y + 51.5}
+                              fill="#ffffff"
+                              fontSize="7.5"
+                              fontFamily="monospace"
+                              fontWeight="bold"
+                            >
+                              🔥 HIGHEST PAST FREQUENCY ({stats.total}x)
+                            </text>
+                          </g>
+                        )}
                       </g>
                     )}
 
@@ -679,10 +794,20 @@ export const FloorPlanHeatmap: React.FC<FloorPlanHeatmapProps> = ({
               </div>
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-gray-100 dark:border-neutral-800">
+            <div className="flex items-center justify-between gap-3 pt-3 border-t border-gray-100 dark:border-neutral-800">
+              <button
+                id={`download-pdf-modal-${selectedIncident.id}`}
+                onClick={() => generateIncidentReportPdf(selectedIncident)}
+                className="px-3 py-1.5 rounded-lg text-xs font-mono font-bold bg-neutral-100 dark:bg-neutral-800 hover:bg-[#52632B] hover:text-white text-neutral-800 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Generate and download formal printable CCEYA regulatory audit PDF"
+              >
+                <FileDown className="w-3.5 h-3.5 text-[#52632B]" />
+                <span>Download Regulatory Audit PDF</span>
+              </button>
+
               <button
                 onClick={() => setSelectedIncident(null)}
-                className="px-4 py-1.5 rounded text-xs font-mono font-bold bg-[#52632B] text-white hover:bg-[#3E4C1E]"
+                className="px-4 py-1.5 rounded-lg text-xs font-mono font-bold bg-[#52632B] text-white hover:bg-[#3E4C1E] cursor-pointer transition-colors"
               >
                 Close Report
               </button>

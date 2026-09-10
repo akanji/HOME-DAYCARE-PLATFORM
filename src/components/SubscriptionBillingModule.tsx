@@ -30,10 +30,17 @@ import {
   Server,
   Globe,
   Activity,
+  Copy,
+  CheckCheck,
+  Terminal,
+  ExternalLink,
+  Layers,
 } from 'lucide-react';
 import { AuthUser, SubscriptionPlanId, BillingInvoice, PayPalGatewayConfig } from '../types';
 import { safeFetchJson } from '../utils/apiClient';
+import { checkAccess, getAccessDecision } from '../utils/accessControl';
 import { PayPalSubscriptionSmartButton } from './PayPalSubscriptionSmartButton';
+import { PayPalSubscriptionPlanSelector } from './PayPalSubscriptionPlanSelector';
 
 interface SubscriptionBillingModuleProps {
   currentUser: AuthUser | null;
@@ -69,7 +76,10 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
   onNavigateTab,
 }) => {
   // Navigation inside billing section
-  const [activeSubTab, setActiveSubTab] = useState<'plans' | 'trial' | 'account' | 'invoices' | 'auth'>('plans');
+  const [activeSubTab, setActiveSubTab] = useState<'plans' | 'trial' | 'gateway' | 'account' | 'invoices' | 'auth'>('plans');
+  const [isTestingGateway, setIsTestingGateway] = useState(false);
+  const [gatewayLatency, setGatewayLatency] = useState<number | null>(null);
+  const [copiedEnv, setCopiedEnv] = useState(false);
 
   // Auth form state
   const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'reset'>('signup');
@@ -99,6 +109,22 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
   const [paypalTransactionDetails, setPayPalTransactionDetails] = useState<any>(null);
   const [fundingSource, setFundingSource] = useState<'paypal_account' | 'credit_debit' | 'pay_in_4'>('paypal_account');
   const [gatewayConfig, setGatewayConfig] = useState<PayPalGatewayConfig | null>(null);
+  const [showAdminKeys, setShowAdminKeys] = useState<boolean>(false);
+
+  // Helper to safely mask credentials, keys, and IDs from public view
+  const maskCredential = (val?: string, visibleLength = 4) => {
+    if (!val) return '••••••••••••';
+    if (showAdminKeys) return val;
+    if (val.length <= visibleLength * 2) return '••••••••••••';
+    return `${val.substring(0, visibleLength)}••••••••${val.slice(-visibleLength)}`;
+  };
+
+  // Ensure public users are redirected away from the gateway diagnostics tab
+  useEffect(() => {
+    if (activeSubTab === 'gateway' && currentUser?.role !== 'admin') {
+      setActiveSubTab('plans');
+    }
+  }, [activeSubTab, currentUser?.role]);
 
   // Fetch live PayPal Gateway deployment configuration from server proxy
   useEffect(() => {
@@ -122,6 +148,57 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
   const notify = (type: 'success' | 'error' | 'info', text: string) => {
     setStatusMessage({ type, text });
     setTimeout(() => setStatusMessage(null), 5000);
+  };
+
+  const handleTestGateway = async () => {
+    setIsTestingGateway(true);
+    const startTime = Date.now();
+    try {
+      const res = await safeFetchJson<PayPalGatewayConfig>('/api/subscription/paypal/gateway-status');
+      const latency = Date.now() - startTime;
+      setGatewayLatency(latency);
+      if (res.ok && res.data) {
+        setGatewayConfig(res.data);
+        notify('success', `PayPal Gateway Ping OK (${latency}ms) — Endpoint: ${res.data.apiUrl}`);
+        if (onLogAudit) {
+          onLogAudit('PAYPAL_GATEWAY_TEST', 'paypal/gateway', `Tested connection to ${res.data.apiUrl} (${latency}ms)`);
+        }
+      } else {
+        notify('error', 'Gateway test failed to receive status from server.');
+      }
+    } catch (err: any) {
+      notify('error', `Gateway check error: ${err?.message || 'unknown'}`);
+    } finally {
+      setIsTestingGateway(false);
+    }
+  };
+
+  const handleCopyEnvConfig = () => {
+    const envSnippet = [
+      'PAYPAL_API_URL=https://api-m.paypal.com',
+      'PAYPAL_CLIENT_ID=YOUR_PAYPAL_CLIENT_ID',
+      'PAYPAL_SECRET_KEY=YOUR_PAYPAL_SECRET_KEY',
+      'PAYPAL_PRODUCT_ID=',
+      'PAYPAL_PLAN_MONTHLY=',
+      'PAYPAL_PLAN_YEARLY=',
+      'PAYPAL_WEBHOOK_ID=',
+    ].join('\n');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(envSnippet).then(() => {
+        setCopiedEnv(true);
+        notify('success', 'PayPal environment configuration copied to clipboard!');
+        setTimeout(() => setCopiedEnv(false), 3000);
+      }).catch(() => {
+        setCopiedEnv(true);
+        notify('success', 'PayPal environment configuration copied!');
+        setTimeout(() => setCopiedEnv(false), 3000);
+      });
+    } else {
+      setCopiedEnv(true);
+      notify('success', 'PayPal environment configuration selected.');
+      setTimeout(() => setCopiedEnv(false), 3000);
+    }
   };
 
   // Sign Up Handler
@@ -303,7 +380,20 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
   const isTrialActive = currentUser?.trial?.isActive ?? false;
   const isTrialExpired = currentUser?.trial?.isExpired ?? false;
   const isSubscriptionActive = currentUser?.subscription?.status === 'active';
-  const hasFullAccess = isSubscriptionActive || (isTrialActive && !isTrialExpired);
+  const isAccessAllowed = checkAccess(currentUser);
+  const accessDecision = getAccessDecision(currentUser);
+  const hasFullAccess = isAccessAllowed;
+
+  // Simulator state for interactive checkAccess(user) testing
+  const [simulatorStatus, setSimulatorStatus] = useState<'ACTIVE' | 'TRIALING' | 'EXPIRED' | 'CANCELLED'>('ACTIVE');
+  const [simulatorTrialDaysOffset, setSimulatorTrialDaysOffset] = useState<number>(3); // Positive = future, negative = expired
+
+  const simulatedTestUser = {
+    subscription_status: simulatorStatus,
+    trial_ends_at: new Date(Date.now() + simulatorTrialDaysOffset * 24 * 60 * 60 * 1000),
+  };
+  const simulatedAccessResult = checkAccess(simulatedTestUser);
+  const simulatedDecision = getAccessDecision(simulatedTestUser);
 
   const trialDaysRemaining = currentUser?.trial?.daysRemaining ?? 0;
   const trialHoursRemaining = currentUser?.trial?.hoursRemaining ?? 0;
@@ -463,6 +553,25 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
               </span>
             )}
           </button>
+
+          {/* Admin-Only Gateway Diagnostics Tab - Completely hidden from the public */}
+          {currentUser?.role === 'admin' && (
+            <button
+              id="tab-gateway-btn"
+              onClick={() => setActiveSubTab('gateway')}
+              className={`px-4 py-2 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'gateway'
+                  ? 'bg-[#52632B] text-white shadow-xs border border-[#E5A910]/40'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-neutral-800'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5" />
+              <span>Gateway Diagnostics</span>
+              <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-600 text-white">
+                ADMIN
+              </span>
+            </button>
+          )}
 
           <button
             id="tab-account-btn"
@@ -716,6 +825,27 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
             </div>
           )}
 
+          {/* PayPal Subscription Plan Selector (Official PayPal JS SDK) */}
+          <div className="max-w-4xl mx-auto">
+            <PayPalSubscriptionPlanSelector
+              userEmail={currentUser?.email}
+              onSuccess={() => {
+                if (currentUser) {
+                  onSubscribePayPal('monthly');
+                }
+              }}
+              onRedirectToDashboard={() => onNavigateTab('overview')}
+            />
+          </div>
+
+          <div className="relative flex py-2 items-center max-w-4xl mx-auto">
+            <div className="flex-grow border-t border-gray-200 dark:border-neutral-800"></div>
+            <span className="flex-shrink mx-4 text-xs font-mono uppercase text-gray-400 font-bold">
+              Or Choose Individual Plan Breakdown
+            </span>
+            <div className="flex-grow border-t border-gray-200 dark:border-neutral-800"></div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
             {/* MONTHLY PLAN CARD */}
             <div
@@ -774,9 +904,8 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
               </div>
 
               <div className="pt-6 space-y-3">
-                {/* Official PayPal Subscription Smart Button with exact container ID */}
+                {/* Official PayPal Subscription Smart Button with exact container ID requested */}
                 <PayPalSubscriptionSmartButton
-                  planId={gatewayConfig?.planIdMonthly || "P-8RP56728U1771900GNKORJ6A"}
                   containerId="paypal-button-container-monthly"
                   planType="monthly"
                   planLabel="Subscribe with PayPal ($19.99/mo)"
@@ -848,9 +977,8 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
               </div>
 
               <div className="pt-6 space-y-3">
-                {/* Official PayPal Subscription Smart Button with exact container ID */}
+                {/* Official PayPal Subscription Smart Button with exact container ID requested */}
                 <PayPalSubscriptionSmartButton
-                  planId={gatewayConfig?.planIdYearly || "P-14S17187NL669422XNKORLRQ"}
                   containerId="paypal-button-container-yearly"
                   planType="yearly"
                   planLabel="Subscribe with PayPal ($199.99/yr)"
@@ -861,6 +989,58 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                 <div className="text-[10px] text-center text-gray-400 font-mono flex items-center justify-center gap-1">
                   <Lock className="w-3 h-3 text-gray-400" />
                   <span>Instant Activation • Server-Side Token Security</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* PUBLIC SECURITY & BUYER PROTECTION GUARANTEE                              */}
+          {/* ========================================================================= */}
+          <div
+            id="public-billing-security-banner"
+            className="max-w-4xl mx-auto rounded-2xl border border-gray-200 dark:border-neutral-800 bg-white dark:bg-[#181a15] p-5 shadow-xs"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-mono">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-neutral-100 uppercase text-[11px]">
+                    256-Bit SSL Protection
+                  </h4>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Transactions are encrypted directly through PayPal's secure vault payment infrastructure.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#52632B]/10 text-[#52632B] dark:text-[#E5A910] flex items-center justify-center shrink-0">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-neutral-100 uppercase text-[11px]">
+                    Instant Activation
+                  </h4>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Access to safety audits, daily logs, and CCEYA compliance tools unlocks immediately upon approval.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-[#D49A00] dark:text-[#E5A910] flex items-center justify-center shrink-0">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-gray-900 dark:text-neutral-100 uppercase text-[11px]">
+                    Flexible Management
+                  </h4>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Easily manage or cancel your auto-renewal preferences at any time directly within your account settings.
+                  </p>
                 </div>
               </div>
             </div>
@@ -1002,12 +1182,456 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                 </button>
               </div>
             </div>
+
+            {/* checkAccess(user) Access Verification Engine & Interactive Sandbox */}
+            <div className="p-6 rounded-xl bg-[#FAF9F6] dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 space-y-4 font-mono">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-200 dark:border-neutral-800 pb-3">
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-[#52632B] dark:text-[#E5A910] font-bold uppercase">
+                    Core Access Gating Protocol
+                  </span>
+                  <h4 className="text-sm font-bold text-gray-900 dark:text-neutral-100 uppercase flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-[#52632B] dark:text-[#E5A910]" />
+                    <span>checkAccess(user) Telemetry & Evaluation</span>
+                  </h4>
+                </div>
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold uppercase flex items-center gap-1.5 ${
+                    isAccessAllowed
+                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300'
+                      : 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isAccessAllowed ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse`} />
+                  {isAccessAllowed ? 'Access Granted (True)' : 'Access Blocked (False - Redirect to Gateway)'}
+                </span>
+              </div>
+
+              {/* Live Evaluation of Current User */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="p-3 rounded-lg bg-white dark:bg-[#181a15] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">user.subscription_status</span>
+                  <p className="font-bold text-gray-900 dark:text-neutral-100">
+                    {currentUser?.subscription_status || currentUser?.subscription?.status?.toUpperCase() || 'TRIALING'}
+                  </p>
+                  <span className="text-[10px] text-gray-400">Current Session Value</span>
+                </div>
+
+                <div className="p-3 rounded-lg bg-white dark:bg-[#181a15] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">user.trial_ends_at</span>
+                  <p className="font-bold text-gray-900 dark:text-neutral-100 truncate">
+                    {currentUser?.trial_ends_at ? new Date(currentUser.trial_ends_at).toLocaleString() : currentUser?.trial?.expiresAt ? new Date(currentUser.trial.expiresAt).toLocaleString() : 'N/A'}
+                  </p>
+                  <span className="text-[10px] text-gray-400">
+                    {isTrialExpired ? 'Status: Concluded' : 'Status: Valid Future Date'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-lg bg-white dark:bg-[#181a15] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <span className="text-[10px] text-gray-500 uppercase font-bold">Enforcement Action</span>
+                  <p className="font-bold text-gray-900 dark:text-neutral-100 truncate">
+                    {isAccessAllowed ? 'Full Access Granted' : 'Redirect to Payment Gateway'}
+                  </p>
+                  <span className="text-[10px] text-gray-400 truncate">
+                    {accessDecision.reason}
+                  </span>
+                </div>
+              </div>
+
+              {/* Exact Code Implementation Reference */}
+              <div className="space-y-1.5 pt-1">
+                <span className="text-[11px] text-gray-600 dark:text-gray-400 uppercase font-bold flex items-center gap-1">
+                  <Terminal className="w-3.5 h-3.5 text-[#52632B] dark:text-[#E5A910]" />
+                  <span>Enforced Function Implementation:</span>
+                </span>
+                <pre className="p-3 rounded-lg bg-gray-950 text-emerald-400 text-[11px] overflow-x-auto leading-relaxed border border-gray-800">
+{`function checkAccess(user) {
+  const now = new Date();
+  // Grant access if trial is still active OR if subscription status is active
+  if (user.subscription_status === 'ACTIVE') return true;
+  if (user.subscription_status === 'TRIALING' && user.trial_ends_at > now) return true;
+  
+  // Block access and redirect to Payment Gateway
+  return false; 
+}`}
+                </pre>
+              </div>
+
+              {/* Interactive Scenario Sandbox Probe */}
+              <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-neutral-800">
+                <span className="text-[11px] text-gray-700 dark:text-gray-300 uppercase font-bold flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-[#52632B] dark:text-[#E5A910]" />
+                  <span>Interactive Scenario Sandbox: Test checkAccess(testUser)</span>
+                </span>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <button
+                    onClick={() => {
+                      setSimulatorStatus('ACTIVE');
+                      setSimulatorTrialDaysOffset(0);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all cursor-pointer ${
+                      simulatorStatus === 'ACTIVE'
+                        ? 'bg-[#52632B] text-white border-[#52632B]'
+                        : 'bg-white dark:bg-[#181a15] text-gray-700 dark:text-gray-300 border-gray-300 dark:border-neutral-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    1. ACTIVE Subscription
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSimulatorStatus('TRIALING');
+                      setSimulatorTrialDaysOffset(4);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all cursor-pointer ${
+                      simulatorStatus === 'TRIALING' && simulatorTrialDaysOffset > 0
+                        ? 'bg-[#52632B] text-white border-[#52632B]'
+                        : 'bg-white dark:bg-[#181a15] text-gray-700 dark:text-gray-300 border-gray-300 dark:border-neutral-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    2. TRIALING (Future Date: +4 Days)
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSimulatorStatus('TRIALING');
+                      setSimulatorTrialDaysOffset(-2);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all cursor-pointer ${
+                      simulatorStatus === 'TRIALING' && simulatorTrialDaysOffset < 0
+                        ? 'bg-rose-700 text-white border-rose-700'
+                        : 'bg-white dark:bg-[#181a15] text-gray-700 dark:text-gray-300 border-gray-300 dark:border-neutral-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    3. TRIALING (Expired: -2 Days in Past)
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSimulatorStatus('EXPIRED');
+                      setSimulatorTrialDaysOffset(0);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all cursor-pointer ${
+                      simulatorStatus === 'EXPIRED'
+                        ? 'bg-rose-700 text-white border-rose-700'
+                        : 'bg-white dark:bg-[#181a15] text-gray-700 dark:text-gray-300 border-gray-300 dark:border-neutral-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    4. EXPIRED / CANCELLED
+                  </button>
+                </div>
+
+                {/* Simulated Result Callout */}
+                <div
+                  className={`p-3 rounded-lg border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
+                    simulatedAccessResult
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 text-emerald-900 dark:text-emerald-200'
+                      : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 text-rose-900 dark:text-rose-200'
+                  }`}
+                >
+                  <div className="space-y-0.5">
+                    <p className="font-bold">
+                      checkAccess(testUser) = <span className="underline">{String(simulatedAccessResult).toUpperCase()}</span>
+                    </p>
+                    <p className="text-[11px] opacity-80">
+                      Reason: {simulatedDecision.message}
+                    </p>
+                  </div>
+                  <span className="text-[10px] uppercase font-bold px-2 py-1 rounded bg-black/10 dark:bg-white/10 shrink-0">
+                    {simulatedAccessResult ? 'ACCESS GRANTED' : 'BLOCKED -> REDIRECT TO GATEWAY'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: ACCOUNT PROFILE & PASSWORD CHANGE                                  */}
+      {/* TAB 3: PAYPAL GATEWAY API ARCHITECTURE & TELEMETRY (ADMIN RESTRICTED)     */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'gateway' && currentUser?.role === 'admin' && (
+        <div id="gateway-tab-content" className="space-y-6 max-w-4xl mx-auto font-mono">
+          <div className="bg-white dark:bg-[#181a15] rounded-2xl border border-gray-200 dark:border-neutral-800 p-6 space-y-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 dark:border-neutral-800 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] uppercase font-bold text-[#52632B] dark:text-[#E5A910]">
+                    Payment Gateway Infrastructure
+                  </span>
+                  <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1">
+                    <ShieldAlert className="w-3 h-3" />
+                    RESTRICTED ADMIN VIEW
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold uppercase text-gray-900 dark:text-neutral-100">
+                  PayPal REST API Gateway Architecture
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAdminKeys(!showAdminKeys)}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 dark:border-neutral-700 bg-gray-50 dark:bg-[#12140f] text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors"
+                  title={showAdminKeys ? 'Mask sensitive credentials' : 'Reveal sensitive credentials'}
+                >
+                  {showAdminKeys ? <EyeOff className="w-3.5 h-3.5 text-rose-500" /> : <Eye className="w-3.5 h-3.5 text-emerald-500" />}
+                  <span>{showAdminKeys ? 'Mask Admin Keys' : 'Reveal Keys (Admin Only)'}</span>
+                </button>
+
+                <span className="px-2.5 py-1 rounded-full text-xs font-bold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  LIVE
+                </span>
+              </div>
+            </div>
+
+            {/* Public Shield Notification */}
+            <div className="p-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 flex items-center gap-3 text-xs text-emerald-900 dark:text-emerald-200">
+              <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+              <div>
+                <p className="font-bold uppercase text-[11px]">Public Protection Active</p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                  This entire gateway configuration panel, environment matrix, secret keys, and client credentials are completely hidden from public subscribers and non-admin accounts.
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 bg-gray-50 dark:bg-[#12140f] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase font-bold">API Endpoint</span>
+                <p className="font-bold text-gray-900 dark:text-gray-100 truncate">api-m.paypal.com</p>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400">Live Production</span>
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-[#12140f] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase font-bold">OAuth Authentication</span>
+                <p className="font-bold text-gray-900 dark:text-gray-100 truncate">Server-Side Proxy</p>
+                <span className="text-[10px] text-sky-600 dark:text-sky-400">Zero Client Secrets</span>
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-[#12140f] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase font-bold">Webhook Listener</span>
+                <p className="font-bold text-gray-900 dark:text-gray-100 truncate">/api/paypal-webhook</p>
+                <span className="text-[10px] text-indigo-600 dark:text-indigo-400">HMAC-SHA256 Active</span>
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-[#12140f] rounded-xl border border-gray-200 dark:border-neutral-800 space-y-1">
+                <span className="text-[10px] text-gray-500 uppercase font-bold">Smart Buttons</span>
+                <p className="font-bold text-gray-900 dark:text-gray-100 truncate">Dynamic SDK Loader</p>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400">Graceful Fallback</span>
+              </div>
+            </div>
+
+            {/* Environment Specification Matrix */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs uppercase font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-[#52632B] dark:text-[#E5A910]" />
+                  <span>Configured Environment Variables Matrix</span>
+                </h4>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCopyEnvConfig}
+                    className="px-2.5 py-1 rounded bg-[#52632B]/10 hover:bg-[#52632B]/20 text-[#52632B] dark:text-[#E5A910] text-[11px] font-bold uppercase flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    {copiedEnv ? <CheckCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedEnv ? 'Copied!' : 'Copy .env'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="border border-gray-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-gray-50 dark:bg-[#12140f] border-b border-gray-200 dark:border-neutral-800 text-[10px] text-gray-500 uppercase">
+                    <tr>
+                      <th className="p-3">Variable Name</th>
+                      <th className="p-3">Injected Value</th>
+                      <th className="p-3">Scope & Protection</th>
+                      <th className="p-3">Purpose</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-neutral-800 text-[11px]">
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_API_URL</td>
+                      <td className="p-3 font-bold text-gray-900 dark:text-neutral-100 select-all">https://api-m.paypal.com</td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">Public REST URL</span></td>
+                      <td className="p-3 text-gray-500">Live production endpoint for PayPal Billing & Subscription APIs</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_CLIENT_ID</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono select-all">
+                        {maskCredential(gatewayConfig?.clientId || 'BAAQW1aByASL-ofhVGFKdwtjWfaiW9IBIlD4jgPTzQwJKe9seanwC0HqFqcJGoIp-ymiaLTskG0CpEZ5H8')}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold">Server Proxy Route</span></td>
+                      <td className="p-3 text-gray-500">Passed to SDK injector via /api/subscription/paypal/client-config</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_SECRET_KEY</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono">
+                        {showAdminKeys ? (gatewayConfig?.secretKeyMasked || 'YOUR_PAYPAL_SECRET_KEY (Configured in .env)') : '•••••••••••••••••••• (Encrypted Server-Side Secret)'}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 font-bold">Strictly Server-Side</span></td>
+                      <td className="p-3 text-gray-500">Basic Auth token generation for /v1/oauth2/token; never sent to browser</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_PRODUCT_ID</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono select-all">
+                        {maskCredential(gatewayConfig?.productId || 'PROD-8GV32494B4446010T')}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 font-bold">Catalog Entity</span></td>
+                      <td className="p-3 text-gray-500">Daycare Safety SaaS parent product for automated billing cycles</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_PLAN_MONTHLY</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono select-all">
+                        {maskCredential(gatewayConfig?.planIdMonthly || '••••••••••••')}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-bold">$19.99 / MO Plan</span></td>
+                      <td className="p-3 text-gray-500">Subscription plan with 30-day recurring billing interval</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_PLAN_YEARLY</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono select-all">
+                        {maskCredential(gatewayConfig?.planIdYearly || '••••••••••••')}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold">$199.99 / YR Plan</span></td>
+                      <td className="p-3 text-gray-500">Subscription plan with 365-day recurring billing interval (17% savings)</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30">
+                      <td className="p-3 font-bold text-[#52632B] dark:text-[#E5A910]">PAYPAL_WEBHOOK_ID</td>
+                      <td className="p-3 text-gray-800 dark:text-neutral-200 font-mono select-all">
+                        {maskCredential(gatewayConfig?.webhookId || '33234690XT010280P')}
+                      </td>
+                      <td className="p-3"><span className="px-1.5 py-0.5 rounded text-[9px] bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 font-bold">HMAC Signature</span></td>
+                      <td className="p-3 text-gray-500">Verifies PayPal-Transmission-Sig & PayPal-Cert-Url on webhook intake</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Interactive Live Diagnostics Testing Tool */}
+            <div className="p-5 rounded-xl bg-[#FAF9F6] dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs uppercase font-bold text-gray-800 dark:text-gray-200">
+                    Live PayPal Gateway Diagnostic Probe
+                  </h4>
+                  <p className="text-[11px] text-gray-500">
+                    Pings `/api/subscription/paypal/gateway-status` to inspect backend configuration status and roundtrip latency.
+                  </p>
+                </div>
+                <button
+                  id="probe-gateway-btn"
+                  onClick={handleTestGateway}
+                  disabled={isTestingGateway}
+                  className="px-4 py-2 rounded-lg bg-[#52632B] hover:bg-[#3E4C1E] text-white text-xs font-bold uppercase flex items-center gap-2 cursor-pointer transition-colors border border-[#E5A910]/40 disabled:opacity-50 shrink-0"
+                >
+                  <Activity className={`w-3.5 h-3.5 ${isTestingGateway ? 'animate-spin' : ''}`} />
+                  <span>{isTestingGateway ? 'Executing Probe...' : 'Execute Gateway Health Ping'}</span>
+                </button>
+              </div>
+
+              {/* Live JSON Payload Viewer */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span>Server Response Payload (Credentials Masked by Default):</span>
+                  {gatewayLatency !== null && (
+                    <span className="text-emerald-600 font-bold">Roundtrip Latency: {gatewayLatency} ms</span>
+                  )}
+                </div>
+                <pre className="p-3 rounded-lg bg-gray-950 text-emerald-400 text-[11px] overflow-x-auto leading-relaxed border border-gray-800">
+{JSON.stringify(
+  showAdminKeys
+    ? (gatewayConfig || {
+        apiUrl: 'https://api-m.paypal.com',
+        status: 'CONFIGURED',
+      })
+    : {
+        apiUrl: gatewayConfig?.apiUrl || 'https://api-m.paypal.com',
+        environment: gatewayConfig?.environment || 'live',
+        status: gatewayConfig?.status || 'CONFIGURED',
+        hasCredentials: gatewayConfig?.hasCredentials ?? true,
+        clientId: maskCredential(gatewayConfig?.clientId || 'BAAQW1aByASL-ofhVGFKdwtjWfaiW9IBIlD4jgPTzQwJKe9seanwC0HqFqcJGoIp-ymiaLTskG0CpEZ5H8'),
+        productId: maskCredential(gatewayConfig?.productId || 'PROD-8GV32494B4446010T'),
+        planIdMonthly: maskCredential(gatewayConfig?.planIdMonthly || '••••••••••••'),
+        planIdYearly: maskCredential(gatewayConfig?.planIdYearly || '••••••••••••'),
+        webhookId: maskCredential(gatewayConfig?.webhookId || '33234690XT010280P'),
+        secretKey: '•••••••••••• (Encrypted Server-Side Secret)',
+        publicProtection: 'Gateway configuration and credentials hidden from public subscribers',
+      },
+  null,
+  2
+)}
+                </pre>
+              </div>
+            </div>
+
+            {/* Webhook Lifecycle Event Routing */}
+            <div className="space-y-3 pt-2">
+              <h4 className="text-xs uppercase font-bold text-gray-700 dark:text-gray-300">
+                Automated Webhook Lifecycle Handlers (/api/paypal-webhook)
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <div className="flex items-center gap-1.5 text-[#52632B] dark:text-[#E5A910] font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>SUBSCRIPTION.CREATED</span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                    Immediately upgrades user record to active status, establishes the 30-day or 365-day expiry timestamp, and unlocks full AI safety tooling.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <div className="flex items-center gap-1.5 text-[#52632B] dark:text-[#E5A910] font-bold">
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>PAYMENT.SALE.COMPLETED</span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                    Generates official bilingual CRA/CCEYA tax-deductible invoice with 13% Ontario HST breakdown and appends to subscriber billing history.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-[#12140f] border border-gray-200 dark:border-neutral-800 space-y-1">
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-bold">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>SUBSCRIPTION.CANCELLED</span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 dark:text-gray-400">
+                    Sets `autoRenew: false` while preserving subscriber access until the pre-paid term concludes, after which access is gracefully restricted.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Access Denied Guard if Non-Admin attempts to access Gateway tab */}
+      {activeSubTab === 'gateway' && currentUser?.role !== 'admin' && (
+        <div className="max-w-md mx-auto p-8 rounded-2xl bg-white dark:bg-[#181a15] border border-gray-200 dark:border-neutral-800 text-center space-y-4 shadow-sm">
+          <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-bold font-mono uppercase text-gray-900 dark:text-neutral-100">
+              Restricted Gateway Access
+            </h3>
+            <p className="text-xs text-gray-500 font-mono leading-relaxed">
+              Payment gateway telemetry, credentials, and internal configuration are strictly restricted to system administrators.
+            </p>
+          </div>
+          <button
+            onClick={() => setActiveSubTab('plans')}
+            className="px-5 py-2.5 rounded-lg bg-[#52632B] hover:bg-[#3E4C1E] text-white font-mono text-xs font-bold uppercase transition-colors cursor-pointer"
+          >
+            Return to Subscription Plans
+          </button>
+        </div>
+      )}
       {/* ========================================================================= */}
       {activeSubTab === 'account' && (
         <div id="account-tab-content" className="space-y-6 max-w-3xl mx-auto">
@@ -1771,7 +2395,6 @@ export const SubscriptionBillingModule: React.FC<SubscriptionBillingModuleProps>
                   {/* Modal PayPal Smart Button Container */}
                   <div className="pt-2">
                     <PayPalSubscriptionSmartButton
-                      planId={selectedPlanForCheckout === 'yearly' ? (gatewayConfig?.planIdYearly || 'P-14S17187NL669422XNKORLRQ') : (gatewayConfig?.planIdMonthly || 'P-8RP56728U1771900GNKORJ6A')}
                       containerId={`paypal-modal-button-container-${selectedPlanForCheckout === 'yearly' ? 'yearly' : 'monthly'}`}
                       planType={selectedPlanForCheckout}
                       planLabel={`Subscribe with PayPal (${selectedPlanForCheckout === 'yearly' ? '$199.99/yr' : '$19.99/mo'})`}

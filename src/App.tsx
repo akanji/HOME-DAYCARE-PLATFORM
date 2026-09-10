@@ -94,6 +94,7 @@ import {
   DaycareRoom,
 } from './types';
 import { safeFetchJson } from './utils/apiClient';
+import { checkAccess, getAccessDecision } from './utils/accessControl';
 import { testFirestoreConnection, pushLocalStateToFirebase } from './firebase';
 
 import {
@@ -113,19 +114,23 @@ import {
   HISTORICAL_INCIDENTS_HEATMAP,
 } from './data/staffAndRoomsData';
 
+const defaultExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
 const DEFAULT_CLIENT_USER: AuthUser = {
   id: 'usr_clara_01',
   fullName: 'Clara Oswald',
   email: 'clara.oswald@daycare.internal',
   role: 'provider',
-  createdAt: '2026-09-01T00:00:00.000Z',
+  createdAt: new Date().toISOString(),
+  subscription_status: 'TRIALING',
+  trial_ends_at: defaultExpiresAt,
   trial: {
     isActive: true,
-    startedAt: '2026-09-01T00:00:00.000Z',
-    expiresAt: '2026-09-08T00:00:00.000Z',
-    daysRemaining: 6,
-    hoursRemaining: 23,
-    minutesRemaining: 59,
+    startedAt: new Date().toISOString(),
+    expiresAt: defaultExpiresAt,
+    daysRemaining: 7,
+    hoursRemaining: 0,
+    minutesRemaining: 0,
     isExpired: false,
     totalTrialDays: 7,
   },
@@ -151,7 +156,19 @@ export default function App() {
   // Navigation & Role State
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [userRole, setUserRole] = useState<UserRole>('provider');
-  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('daycare_theme');
+      if (stored === 'dark') return true;
+      if (stored === 'light') return false;
+      if (typeof window !== 'undefined' && window.matchMedia) {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+    } catch {
+      // Fallback if localStorage or matchMedia is restricted
+    }
+    return false;
+  });
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [isOpenMobile, setIsOpenMobile] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -188,14 +205,42 @@ export default function App() {
   const [pipScene, setPipScene] = useState<ScenePreset>(PRESET_SCENES[0]);
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(audioAlertService.getMuted());
 
-  // Dark Mode synchronization
+  // Dark Mode synchronization across DOM & persistence
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    try {
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+        document.documentElement.setAttribute('data-theme', 'dark');
+        document.body.classList.add('dark');
+        localStorage.setItem('daycare_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        document.documentElement.setAttribute('data-theme', 'light');
+        document.body.classList.remove('dark');
+        localStorage.setItem('daycare_theme', 'light');
+      }
+    } catch {
+      // Ignore storage errors in restricted iframes
     }
   }, [darkMode]);
+
+  // Listen to OS-level theme changes if no explicit user override is present
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleThemeChange = (e: MediaQueryListEvent) => {
+      try {
+        const stored = localStorage.getItem('daycare_theme');
+        if (!stored) {
+          setDarkMode(e.matches);
+        }
+      } catch {
+        // Fallback
+      }
+    };
+    mq.addEventListener('change', handleThemeChange);
+    return () => mq.removeEventListener('change', handleThemeChange);
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -247,18 +292,18 @@ export default function App() {
   }, [refreshUserSession]);
 
   // Subscription Access Control Enforcer
-  // When trial has expired and no active subscription, restrict premium features and redirect to Billing
-  const RESTRICTED_TRIAL_TABS = ['vision', 'a2a_judge', 'reports', 'media', 'messages'];
-  const hasSubscriptionAccess =
-    currentUser?.subscription?.status === 'active' ||
-    (currentUser?.trial?.isActive && !currentUser?.trial?.isExpired);
+  // Core checkAccess rule:
+  // - Grant access if user.subscription_status === 'ACTIVE'
+  // - Grant access if user.subscription_status === 'TRIALING' && user.trial_ends_at > now
+  // - Block access and redirect to Payment Gateway
+  const hasAccess = checkAccess(currentUser);
 
   useEffect(() => {
-    if (currentUser && !hasSubscriptionAccess && RESTRICTED_TRIAL_TABS.includes(activeTab)) {
-      showToast('⚠️ 7-Day Free Trial Expired: Restricted access. Redirected to Subscription & Billing.');
+    if (currentUser && !hasAccess && activeTab !== 'subscription') {
+      showToast('⚠️ Access Blocked: 7-day free trial concluded or subscription inactive. Redirected to Payment Gateway.');
       setActiveTab('subscription');
     }
-  }, [activeTab, currentUser, hasSubscriptionAccess]);
+  }, [activeTab, currentUser, hasAccess]);
 
   // Auth & Subscription Actions
   const handleSignUp = async (fullName: string, email: string, pwd: string) => {
@@ -1294,6 +1339,56 @@ export default function App() {
                 }`}
               >
                 <span>FR</span>
+              </button>
+            </div>
+
+            {/* Dark Mode / Light Mode Theme Segmented Toggle */}
+            <div
+              id="header-theme-toggle-container"
+              className="flex items-center rounded-lg border border-gray-200 dark:border-neutral-800 bg-gray-50 dark:bg-neutral-900 p-0.5 shadow-xs"
+              title={darkMode ? "Current: Dark Mode (Click to switch to Light Mode)" : "Current: Light Mode (Click to switch to Dark Mode)"}
+            >
+              <button
+                id="header-theme-btn-light"
+                type="button"
+                onClick={() => {
+                  if (darkMode) {
+                    setDarkMode(false);
+                    showToast('Switched to Light Mode');
+                    logAudit('THEME_SWITCH', 'system/ui', 'Switched theme to Light Mode');
+                  }
+                }}
+                className={`px-2 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  !darkMode
+                    ? 'bg-white dark:bg-neutral-800 text-[#52632B] dark:text-[#E5A910] shadow-xs'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-neutral-200'
+                }`}
+                title="Switch to Light Theme"
+                aria-label="Switch to Light Theme"
+              >
+                <Sun className="w-3.5 h-3.5 text-amber-500" />
+                <span className="hidden md:inline">Light</span>
+              </button>
+              <button
+                id="header-theme-btn-dark"
+                type="button"
+                onClick={() => {
+                  if (!darkMode) {
+                    setDarkMode(true);
+                    showToast('Switched to Dark Mode');
+                    logAudit('THEME_SWITCH', 'system/ui', 'Switched theme to Dark Mode');
+                  }
+                }}
+                className={`px-2 py-1 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  darkMode
+                    ? 'bg-white dark:bg-neutral-800 text-[#52632B] dark:text-[#E5A910] shadow-xs'
+                    : 'text-gray-400 hover:text-gray-700 dark:hover:text-neutral-200'
+                }`}
+                title="Switch to Dark Theme"
+                aria-label="Switch to Dark Theme"
+              >
+                <Moon className="w-3.5 h-3.5 text-[#52632B] dark:text-[#E5A910]" />
+                <span className="hidden md:inline">Dark</span>
               </button>
             </div>
 

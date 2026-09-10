@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Child, StaffMember, DaycareRoom, RatioConflict } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { StaffAttendanceRatioChart } from './StaffAttendanceRatioChart';
 
 interface StaffSchedulingProps {
   staffList: StaffMember[];
@@ -413,6 +414,13 @@ export const StaffSchedulingModule: React.FC<StaffSchedulingProps> = ({
           )}
         </div>
       </div>
+
+      {/* 7-Day Staff Coverage Hours vs. Child Attendance Ratio Recharts Widget */}
+      <StaffAttendanceRatioChart
+        staffList={staffList}
+        rooms={rooms}
+        childrenList={childrenList}
+      />
 
       {/* Classrooms Grid: Ratios, Staff & Children */}
       <div className="space-y-3">

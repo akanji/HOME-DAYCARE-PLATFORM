@@ -12,8 +12,26 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Immediate theme initializer to prevent flicker -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('daycare_theme');
+          var isDark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.setAttribute('data-theme', 'dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Load PayPal JS SDK (Include 'subscriptions' component) -->
+    <script id="paypal-sdk-script" src="https://www.paypal.com/sdk/js?client-id=BAAQW1aByASL-ofhVGFKdwtjWfaiW9IBIlD4jgPTzQwJKe9seanwC0HqFqcJGoIp-ymiaLTskG0CpEZ5H8&vault=true&intent=subscription" data-sdk-integration-source="button-factory"></script>
   </head>
-  <body class="bg-[#FAF9F6] text-neutral-900 antialiased selection:bg-[#52632B] selection:text-white">
+  <body class="bg-[#FAF9F6] dark:bg-[#12140f] text-neutral-900 dark:text-neutral-100 antialiased selection:bg-[#52632B] selection:text-white transition-colors duration-200 min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

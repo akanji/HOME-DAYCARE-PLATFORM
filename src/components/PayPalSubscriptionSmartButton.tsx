@@ -34,13 +34,10 @@ export const loadPayPalSdkScript = async (): Promise<boolean> => {
   paypalScriptLoadPromise = (async () => {
     try {
       // 1. Fetch Client ID and SDK parameters securely from server-side route proxy
+      const defaultClientId = 'BAAQW1aByASL-ofhVGFKdwtjWfaiW9IBIlD4jgPTzQwJKe9seanwC0HqFqcJGoIp-ymiaLTskG0CpEZ5H8';
       const res = await safeFetchJson<PayPalClientConfig>('/api/subscription/paypal/client-config');
-      if (!res.ok || !res.data?.clientId) {
-        console.warn('PayPal client config could not be fetched from server route proxy:', res.error);
-        return false;
-      }
-
-      const { clientId, sdkUrl } = res.data;
+      const clientId = (res.ok && res.data?.clientId) ? res.data.clientId : defaultClientId;
+      const sdkUrl = res.data?.sdkUrl || `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&vault=true&intent=subscription`;
 
       // 2. Check if script tag already exists in DOM
       const existingScript = document.getElementById('paypal-sdk-script') as HTMLScriptElement | null;
@@ -89,7 +86,7 @@ export const loadPayPalSdkScript = async (): Promise<boolean> => {
 };
 
 interface PayPalSubscriptionSmartButtonProps {
-  planId: string; // 'P-8RP56728U1771900GNKORJ6A' | 'P-14S17187NL669422XNKORLRQ'
+  planId?: string;
   containerId: string;
   planType: SubscriptionPlanId;
   planLabel: string;
@@ -108,11 +105,31 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
   const [sdkStatus, setSdkStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
   const renderedRef = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isRenderingRef = useRef<boolean>(false);
+  const onApproveRef = useRef(onApproveSuccess);
+
+  useEffect(() => {
+    onApproveRef.current = onApproveSuccess;
+  });
 
   useEffect(() => {
     let isCancelled = false;
 
     const initButton = async () => {
+      const container = containerRef.current || document.getElementById(containerId);
+      if (!container || !document.body.contains(container)) {
+        return;
+      }
+
+      if (renderedRef.current && container.children.length > 0) {
+        setSdkStatus('ready');
+        return;
+      }
+
+      if (isRenderingRef.current) {
+        return;
+      }
+
       // 1. Ensure PayPal SDK script is loaded dynamically via server proxy
       const loaded = await loadPayPalSdkScript();
       if (isCancelled) return;
@@ -128,19 +145,20 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
         return;
       }
 
-      const container = document.getElementById(containerId);
-      if (!container) {
+      const currentContainer = containerRef.current || document.getElementById(containerId);
+      if (!currentContainer || !document.body.contains(currentContainer) || isCancelled) {
         return;
       }
 
-      if (renderedRef.current && container.children.length > 0) {
+      if (renderedRef.current && currentContainer.children.length > 0) {
         setSdkStatus('ready');
         return;
       }
 
       try {
-        container.innerHTML = '';
-        paypal.Buttons({
+        isRenderingRef.current = true;
+        currentContainer.innerHTML = '';
+        const button = paypal.Buttons({
           style: {
             shape: 'rect',
             color: 'gold',
@@ -148,44 +166,73 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
             label: 'subscribe',
           },
           createSubscription: async function (_data: any, actions: any) {
+            // First attempt secure server-side subscription creation
             try {
               const res = await fetch('/api/create-subscription', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ planType }),
               });
-              if (res.ok) {
-                const data = await res.json();
-                if (data?.subscriptionID) {
-                  return data.subscriptionID;
-                }
+              const data = await res.json();
+              if (data?.subscriptionID) {
+                return data.subscriptionID;
               }
             } catch (err) {
-              console.warn('Backend /api/create-subscription call fell back to client actions:', err);
+              console.warn('Backend create-subscription fallback:', err);
             }
+
+            // Fallback for direct client SDK creation using server-configured plan IDs
+            const fallbackPlanId = planId || (planType === 'yearly' ? 'P-7BJ4281497082825YNKOQJBI' : 'P-8RP56728U1771900GNKORJ6A');
             return actions.subscription.create({
-              /* Fallback client-side subscription creation */
-              plan_id: planId,
+              plan_id: fallbackPlanId,
             });
           },
           onApprove: function (data: any, _actions: any) {
+            try {
+              if (typeof window !== 'undefined' && window.alert && !window.frameElement) {
+                window.alert(data.subscriptionID);
+              }
+            } catch {
+              // Ignore iframe sandboxed alert restrictions
+            }
             if (data?.subscriptionID) {
-              onApproveSuccess(data.subscriptionID, planType);
+              onApproveRef.current(data.subscriptionID, planType);
             }
           },
           onError: function (err: any) {
-            console.warn(`PayPal button runtime error for ${planId}:`, err);
+            const errStr = err?.message || String(err || '');
+            if (errStr.includes('Detected container element removed from DOM')) {
+              return;
+            }
+            console.warn(`PayPal button runtime error for plan tier ${planType}:`, err);
             if (!isCancelled) setSdkStatus('fallback');
           },
-        }).render(`#${containerId}`);
+        });
 
-        if (!isCancelled) {
-          renderedRef.current = true;
-          setSdkStatus('ready');
+        button.render(currentContainer)
+          .then(() => {
+            isRenderingRef.current = false;
+            if (!isCancelled) {
+              renderedRef.current = true;
+              setSdkStatus('ready');
+            }
+          })
+          .catch((err: any) => {
+            isRenderingRef.current = false;
+            const errStr = err?.message || String(err || '');
+            if (errStr.includes('Detected container element removed from DOM')) {
+              return;
+            }
+            console.warn('Error mounting PayPal Buttons:', err);
+            if (!isCancelled) setSdkStatus('fallback');
+          });
+      } catch (err: any) {
+        isRenderingRef.current = false;
+        const errStr = err?.message || String(err || '');
+        if (!errStr.includes('Detected container element removed from DOM')) {
+          console.warn('Error creating PayPal Buttons:', err);
+          if (!isCancelled) setSdkStatus('fallback');
         }
-      } catch (err) {
-        console.warn('Error mounting PayPal Buttons:', err);
-        if (!isCancelled) setSdkStatus('fallback');
       }
     };
 
@@ -193,8 +240,9 @@ export const PayPalSubscriptionSmartButton: React.FC<PayPalSubscriptionSmartButt
 
     return () => {
       isCancelled = true;
+      isRenderingRef.current = false;
     };
-  }, [planId, containerId, planType, onApproveSuccess]);
+  }, [containerId, planType, planId]);
 
   return (
     <div className="w-full space-y-2">
